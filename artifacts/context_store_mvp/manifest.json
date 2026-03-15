@@ -1,0 +1,1437 @@
+{
+  "created_at": "2026-03-15T04:12:25.814235+00:00",
+  "source_file": "D:\\AINet\\LLM\\M-A-P\\RLM\\mcp-rlm\\artifacts\\tmp_input_mvp.txt",
+  "total_chars": 129746,
+  "chunk_chars": 1400,
+  "overlap_chars": 120,
+  "branch_factor": 4,
+  "levels": {
+    "0": [
+      "L0_0000000",
+      "L0_0000001",
+      "L0_0000002",
+      "L0_0000003",
+      "L0_0000004",
+      "L0_0000005",
+      "L0_0000006",
+      "L0_0000007",
+      "L0_0000008",
+      "L0_0000009",
+      "L0_0000010",
+      "L0_0000011",
+      "L0_0000012",
+      "L0_0000013",
+      "L0_0000014",
+      "L0_0000015",
+      "L0_0000016",
+      "L0_0000017",
+      "L0_0000018",
+      "L0_0000019",
+      "L0_0000020",
+      "L0_0000021",
+      "L0_0000022",
+      "L0_0000023",
+      "L0_0000024",
+      "L0_0000025",
+      "L0_0000026",
+      "L0_0000027",
+      "L0_0000028",
+      "L0_0000029",
+      "L0_0000030",
+      "L0_0000031",
+      "L0_0000032",
+      "L0_0000033",
+      "L0_0000034",
+      "L0_0000035",
+      "L0_0000036",
+      "L0_0000037",
+      "L0_0000038",
+      "L0_0000039",
+      "L0_0000040",
+      "L0_0000041",
+      "L0_0000042",
+      "L0_0000043",
+      "L0_0000044",
+      "L0_0000045",
+      "L0_0000046",
+      "L0_0000047",
+      "L0_0000048",
+      "L0_0000049",
+      "L0_0000050",
+      "L0_0000051",
+      "L0_0000052",
+      "L0_0000053",
+      "L0_0000054",
+      "L0_0000055",
+      "L0_0000056",
+      "L0_0000057",
+      "L0_0000058",
+      "L0_0000059",
+      "L0_0000060",
+      "L0_0000061",
+      "L0_0000062",
+      "L0_0000063",
+      "L0_0000064",
+      "L0_0000065",
+      "L0_0000066",
+      "L0_0000067",
+      "L0_0000068",
+      "L0_0000069",
+      "L0_0000070",
+      "L0_0000071",
+      "L0_0000072",
+      "L0_0000073",
+      "L0_0000074",
+      "L0_0000075",
+      "L0_0000076",
+      "L0_0000077",
+      "L0_0000078",
+      "L0_0000079",
+      "L0_0000080",
+      "L0_0000081",
+      "L0_0000082",
+      "L0_0000083",
+      "L0_0000084",
+      "L0_0000085",
+      "L0_0000086",
+      "L0_0000087",
+      "L0_0000088",
+      "L0_0000089",
+      "L0_0000090",
+      "L0_0000091",
+      "L0_0000092",
+      "L0_0000093",
+      "L0_0000094",
+      "L0_0000095",
+      "L0_0000096",
+      "L0_0000097",
+      "L0_0000098",
+      "L0_0000099",
+      "L0_0000100",
+      "L0_0000101"
+    ],
+    "1": [
+      "L1_0000000",
+      "L1_0000001",
+      "L1_0000002",
+      "L1_0000003",
+      "L1_0000004",
+      "L1_0000005",
+      "L1_0000006",
+      "L1_0000007",
+      "L1_0000008",
+      "L1_0000009",
+      "L1_0000010",
+      "L1_0000011",
+      "L1_0000012",
+      "L1_0000013",
+      "L1_0000014",
+      "L1_0000015",
+      "L1_0000016",
+      "L1_0000017",
+      "L1_0000018",
+      "L1_0000019",
+      "L1_0000020",
+      "L1_0000021",
+      "L1_0000022",
+      "L1_0000023",
+      "L1_0000024",
+      "L1_0000025"
+    ],
+    "2": [
+      "L2_0000000",
+      "L2_0000001",
+      "L2_0000002",
+      "L2_0000003",
+      "L2_0000004",
+      "L2_0000005",
+      "L2_0000006"
+    ],
+    "3": [
+      "L3_0000000",
+      "L3_0000001"
+    ],
+    "4": [
+      "L4_0000000"
+    ]
+  },
+  "segments": {
+    "L0_0000000": {
+      "level": 0,
+      "start_char": 0,
+      "end_char": 1400,
+      "num_chars": 1400,
+      "preview": "header: synthetic long context line 0: noise content about random logs and traces. line 1: noise content about random logs and traces. line 2: noise content about random logs and traces. line 3: noise",
+      "file": "segments\\level0\\L0_0000000.txt"
+    },
+    "L0_0000001": {
+      "level": 0,
+      "start_char": 1280,
+      "end_char": 2680,
+      "num_chars": 1400,
+      "preview": " and traces. line 24: noise content about random logs and traces. line 25: noise content about random logs and traces. line 26: noise content about random logs and traces. line 27: noise content about",
+      "file": "segments\\level0\\L0_0000001.txt"
+    },
+    "L0_0000002": {
+      "level": 0,
+      "start_char": 2560,
+      "end_char": 3960,
+      "num_chars": 1400,
+      "preview": "ces. line 48: noise content about random logs and traces. line 49: noise content about random logs and traces. line 50: noise content about random logs and traces. line 51: noise content about random ",
+      "file": "segments\\level0\\L0_0000002.txt"
+    },
+    "L0_0000003": {
+      "level": 0,
+      "start_char": 3840,
+      "end_char": 5240,
+      "num_chars": 1400,
+      "preview": "e 72: noise content about random logs and traces. line 73: noise content about random logs and traces. line 74: noise content about random logs and traces. line 75: noise content about random logs and",
+      "file": "segments\\level0\\L0_0000003.txt"
+    },
+    "L0_0000004": {
+      "level": 0,
+      "start_char": 5120,
+      "end_char": 6520,
+      "num_chars": 1400,
+      "preview": "ise content about random logs and traces. line 97: noise content about random logs and traces. line 98: noise content about random logs and traces. line 99: noise content about random logs and traces.",
+      "file": "segments\\level0\\L0_0000004.txt"
+    },
+    "L0_0000005": {
+      "level": 0,
+      "start_char": 6400,
+      "end_char": 7800,
+      "num_chars": 1400,
+      "preview": " line 120: noise content about random logs and traces. line 121: noise content about random logs and traces. line 122: noise content about random logs and traces. line 123: noise content about random ",
+      "file": "segments\\level0\\L0_0000005.txt"
+    },
+    "L0_0000006": {
+      "level": 0,
+      "start_char": 7680,
+      "end_char": 9080,
+      "num_chars": 1400,
+      "preview": "logs and traces. line 144: noise content about random logs and traces. line 145: noise content about random logs and traces. line 146: noise content about random logs and traces. line 147: noise conte",
+      "file": "segments\\level0\\L0_0000006.txt"
+    },
+    "L0_0000007": {
+      "level": 0,
+      "start_char": 8960,
+      "end_char": 10360,
+      "num_chars": 1400,
+      "preview": "nt about random logs and traces. line 168: noise content about random logs and traces. line 169: noise content about random logs and traces. line 170: noise content about random logs and traces. line ",
+      "file": "segments\\level0\\L0_0000007.txt"
+    },
+    "L0_0000008": {
+      "level": 0,
+      "start_char": 10240,
+      "end_char": 11640,
+      "num_chars": 1400,
+      "preview": "191: noise content about random logs and traces. line 192: noise content about random logs and traces. line 193: noise content about random logs and traces. line 194: noise content about random logs a",
+      "file": "segments\\level0\\L0_0000008.txt"
+    },
+    "L0_0000009": {
+      "level": 0,
+      "start_char": 11520,
+      "end_char": 12920,
+      "num_chars": 1400,
+      "preview": "nd traces. line 215: noise content about random logs and traces. line 216: noise content about random logs and traces. line 217: noise content about random logs and traces. line 218: noise content abo",
+      "file": "segments\\level0\\L0_0000009.txt"
+    },
+    "L0_0000010": {
+      "level": 0,
+      "start_char": 12800,
+      "end_char": 14200,
+      "num_chars": 1400,
+      "preview": "ut random logs and traces. line 239: noise content about random logs and traces. line 240: noise content about random logs and traces. line 241: noise content about random logs and traces. line 242: n",
+      "file": "segments\\level0\\L0_0000010.txt"
+    },
+    "L0_0000011": {
+      "level": 0,
+      "start_char": 14080,
+      "end_char": 15480,
+      "num_chars": 1400,
+      "preview": "oise content about random logs and traces. line 263: noise content about random logs and traces. line 264: noise content about random logs and traces. line 265: noise content about random logs and tra",
+      "file": "segments\\level0\\L0_0000011.txt"
+    },
+    "L0_0000012": {
+      "level": 0,
+      "start_char": 15360,
+      "end_char": 16760,
+      "num_chars": 1400,
+      "preview": "ces. line 286: noise content about random logs and traces. line 287: noise content about random logs and traces. line 288: noise content about random logs and traces. line 289: noise content about ran",
+      "file": "segments\\level0\\L0_0000012.txt"
+    },
+    "L0_0000013": {
+      "level": 0,
+      "start_char": 16640,
+      "end_char": 18040,
+      "num_chars": 1400,
+      "preview": "dom logs and traces. line 310: noise content about random logs and traces. line 311: noise content about random logs and traces. line 312: noise content about random logs and traces. line 313: noise c",
+      "file": "segments\\level0\\L0_0000013.txt"
+    },
+    "L0_0000014": {
+      "level": 0,
+      "start_char": 17920,
+      "end_char": 19320,
+      "num_chars": 1400,
+      "preview": "ontent about random logs and traces. line 334: noise content about random logs and traces. line 335: noise content about random logs and traces. line 336: noise content about random logs and traces. l",
+      "file": "segments\\level0\\L0_0000014.txt"
+    },
+    "L0_0000015": {
+      "level": 0,
+      "start_char": 19200,
+      "end_char": 20600,
+      "num_chars": 1400,
+      "preview": "ine 357: noise content about random logs and traces. line 358: noise content about random logs and traces. line 359: noise content about random logs and traces. line 360: noise content about random lo",
+      "file": "segments\\level0\\L0_0000015.txt"
+    },
+    "L0_0000016": {
+      "level": 0,
+      "start_char": 20480,
+      "end_char": 21880,
+      "num_chars": 1400,
+      "preview": "gs and traces. line 381: noise content about random logs and traces. line 382: noise content about random logs and traces. line 383: noise content about random logs and traces. line 384: noise content",
+      "file": "segments\\level0\\L0_0000016.txt"
+    },
+    "L0_0000017": {
+      "level": 0,
+      "start_char": 21760,
+      "end_char": 23160,
+      "num_chars": 1400,
+      "preview": " about random logs and traces. line 405: noise content about random logs and traces. line 406: noise content about random logs and traces. line 407: noise content about random logs and traces. line 40",
+      "file": "segments\\level0\\L0_0000017.txt"
+    },
+    "L0_0000018": {
+      "level": 0,
+      "start_char": 23040,
+      "end_char": 24440,
+      "num_chars": 1400,
+      "preview": "8: noise content about random logs and traces. line 429: noise content about random logs and traces. line 430: noise content about random logs and traces. line 431: noise content about random logs and",
+      "file": "segments\\level0\\L0_0000018.txt"
+    },
+    "L0_0000019": {
+      "level": 0,
+      "start_char": 24320,
+      "end_char": 25720,
+      "num_chars": 1400,
+      "preview": " traces. line 452: noise content about random logs and traces. line 453: noise content about random logs and traces. line 454: noise content about random logs and traces. line 455: noise content about",
+      "file": "segments\\level0\\L0_0000019.txt"
+    },
+    "L0_0000020": {
+      "level": 0,
+      "start_char": 25600,
+      "end_char": 27000,
+      "num_chars": 1400,
+      "preview": " random logs and traces. line 476: noise content about random logs and traces. line 477: noise content about random logs and traces. line 478: noise content about random logs and traces. line 479: noi",
+      "file": "segments\\level0\\L0_0000020.txt"
+    },
+    "L0_0000021": {
+      "level": 0,
+      "start_char": 26880,
+      "end_char": 28280,
+      "num_chars": 1400,
+      "preview": "se content about random logs and traces. line 500: noise content about random logs and traces. line 501: noise content about random logs and traces. line 502: noise content about random logs and trace",
+      "file": "segments\\level0\\L0_0000021.txt"
+    },
+    "L0_0000022": {
+      "level": 0,
+      "start_char": 28160,
+      "end_char": 29560,
+      "num_chars": 1400,
+      "preview": "s. line 523: noise content about random logs and traces. line 524: noise content about random logs and traces. line 525: noise content about random logs and traces. line 526: noise content about rando",
+      "file": "segments\\level0\\L0_0000022.txt"
+    },
+    "L0_0000023": {
+      "level": 0,
+      "start_char": 29440,
+      "end_char": 30840,
+      "num_chars": 1400,
+      "preview": "m logs and traces. line 547: noise content about random logs and traces. line 548: noise content about random logs and traces. line 549: noise content about random logs and traces. line 550: noise con",
+      "file": "segments\\level0\\L0_0000023.txt"
+    },
+    "L0_0000024": {
+      "level": 0,
+      "start_char": 30720,
+      "end_char": 32120,
+      "num_chars": 1400,
+      "preview": "tent about random logs and traces. line 571: noise content about random logs and traces. line 572: noise content about random logs and traces. line 573: noise content about random logs and traces. lin",
+      "file": "segments\\level0\\L0_0000024.txt"
+    },
+    "L0_0000025": {
+      "level": 0,
+      "start_char": 32000,
+      "end_char": 33400,
+      "num_chars": 1400,
+      "preview": "e 594: noise content about random logs and traces. line 595: noise content about random logs and traces. line 596: noise content about random logs and traces. line 597: noise content about random logs",
+      "file": "segments\\level0\\L0_0000025.txt"
+    },
+    "L0_0000026": {
+      "level": 0,
+      "start_char": 33280,
+      "end_char": 34680,
+      "num_chars": 1400,
+      "preview": " and traces. line 618: noise content about random logs and traces. line 619: noise content about random logs and traces. line 620: noise content about random logs and traces. line 621: noise content a",
+      "file": "segments\\level0\\L0_0000026.txt"
+    },
+    "L0_0000027": {
+      "level": 0,
+      "start_char": 34560,
+      "end_char": 35960,
+      "num_chars": 1400,
+      "preview": "bout random logs and traces. line 642: noise content about random logs and traces. line 643: noise content about random logs and traces. line 644: noise content about random logs and traces. line 645:",
+      "file": "segments\\level0\\L0_0000027.txt"
+    },
+    "L0_0000028": {
+      "level": 0,
+      "start_char": 35840,
+      "end_char": 37240,
+      "num_chars": 1400,
+      "preview": " noise content about random logs and traces. line 666: noise content about random logs and traces. line 667: noise content about random logs and traces. line 668: noise content about random logs and t",
+      "file": "segments\\level0\\L0_0000028.txt"
+    },
+    "L0_0000029": {
+      "level": 0,
+      "start_char": 37120,
+      "end_char": 38520,
+      "num_chars": 1400,
+      "preview": "races. line 689: noise content about random logs and traces. line 690: noise content about random logs and traces. line 691: noise content about random logs and traces. line 692: noise content about r",
+      "file": "segments\\level0\\L0_0000029.txt"
+    },
+    "L0_0000030": {
+      "level": 0,
+      "start_char": 38400,
+      "end_char": 39800,
+      "num_chars": 1400,
+      "preview": "andom logs and traces. line 713: noise content about random logs and traces. line 714: noise content about random logs and traces. line 715: noise content about random logs and traces. line 716: noise",
+      "file": "segments\\level0\\L0_0000030.txt"
+    },
+    "L0_0000031": {
+      "level": 0,
+      "start_char": 39680,
+      "end_char": 41080,
+      "num_chars": 1400,
+      "preview": " content about random logs and traces. line 737: noise content about random logs and traces. line 738: noise content about random logs and traces. line 739: noise content about random logs and traces.",
+      "file": "segments\\level0\\L0_0000031.txt"
+    },
+    "L0_0000032": {
+      "level": 0,
+      "start_char": 40960,
+      "end_char": 42360,
+      "num_chars": 1400,
+      "preview": " line 760: noise content about random logs and traces. line 761: noise content about random logs and traces. line 762: noise content about random logs and traces. line 763: noise content about random ",
+      "file": "segments\\level0\\L0_0000032.txt"
+    },
+    "L0_0000033": {
+      "level": 0,
+      "start_char": 42240,
+      "end_char": 43640,
+      "num_chars": 1400,
+      "preview": "logs and traces. line 784: noise content about random logs and traces. line 785: noise content about random logs and traces. line 786: noise content about random logs and traces. line 787: noise conte",
+      "file": "segments\\level0\\L0_0000033.txt"
+    },
+    "L0_0000034": {
+      "level": 0,
+      "start_char": 43520,
+      "end_char": 44920,
+      "num_chars": 1400,
+      "preview": "nt about random logs and traces. line 808: noise content about random logs and traces. line 809: noise content about random logs and traces. line 810: noise content about random logs and traces. line ",
+      "file": "segments\\level0\\L0_0000034.txt"
+    },
+    "L0_0000035": {
+      "level": 0,
+      "start_char": 44800,
+      "end_char": 46200,
+      "num_chars": 1400,
+      "preview": "831: noise content about random logs and traces. line 832: noise content about random logs and traces. line 833: noise content about random logs and traces. line 834: noise content about random logs a",
+      "file": "segments\\level0\\L0_0000035.txt"
+    },
+    "L0_0000036": {
+      "level": 0,
+      "start_char": 46080,
+      "end_char": 47480,
+      "num_chars": 1400,
+      "preview": "nd traces. line 855: noise content about random logs and traces. line 856: noise content about random logs and traces. line 857: noise content about random logs and traces. line 858: noise content abo",
+      "file": "segments\\level0\\L0_0000036.txt"
+    },
+    "L0_0000037": {
+      "level": 0,
+      "start_char": 47360,
+      "end_char": 48760,
+      "num_chars": 1400,
+      "preview": "ut random logs and traces. line 879: noise content about random logs and traces. line 880: noise content about random logs and traces. line 881: noise content about random logs and traces. line 882: n",
+      "file": "segments\\level0\\L0_0000037.txt"
+    },
+    "L0_0000038": {
+      "level": 0,
+      "start_char": 48640,
+      "end_char": 50040,
+      "num_chars": 1400,
+      "preview": "oise content about random logs and traces. line 903: noise content about random logs and traces. line 904: noise content about random logs and traces. line 905: noise content about random logs and tra",
+      "file": "segments\\level0\\L0_0000038.txt"
+    },
+    "L0_0000039": {
+      "level": 0,
+      "start_char": 49920,
+      "end_char": 51320,
+      "num_chars": 1400,
+      "preview": "ces. line 926: noise content about random logs and traces. line 927: noise content about random logs and traces. line 928: noise content about random logs and traces. line 929: noise content about ran",
+      "file": "segments\\level0\\L0_0000039.txt"
+    },
+    "L0_0000040": {
+      "level": 0,
+      "start_char": 51200,
+      "end_char": 52600,
+      "num_chars": 1400,
+      "preview": "dom logs and traces. line 950: noise content about random logs and traces. line 951: noise content about random logs and traces. line 952: noise content about random logs and traces. line 953: noise c",
+      "file": "segments\\level0\\L0_0000040.txt"
+    },
+    "L0_0000041": {
+      "level": 0,
+      "start_char": 52480,
+      "end_char": 53880,
+      "num_chars": 1400,
+      "preview": "ontent about random logs and traces. line 974: noise content about random logs and traces. line 975: noise content about random logs and traces. line 976: noise content about random logs and traces. l",
+      "file": "segments\\level0\\L0_0000041.txt"
+    },
+    "L0_0000042": {
+      "level": 0,
+      "start_char": 53760,
+      "end_char": 55160,
+      "num_chars": 1400,
+      "preview": "ine 997: noise content about random logs and traces. line 998: noise content about random logs and traces. line 999: noise content about random logs and traces. line 1000: noise content about random l",
+      "file": "segments\\level0\\L0_0000042.txt"
+    },
+    "L0_0000043": {
+      "level": 0,
+      "start_char": 55040,
+      "end_char": 56440,
+      "num_chars": 1400,
+      "preview": "ntent about random logs and traces. line 1021: noise content about random logs and traces. line 1022: noise content about random logs and traces. line 1023: noise content about random logs and traces.",
+      "file": "segments\\level0\\L0_0000043.txt"
+    },
+    "L0_0000044": {
+      "level": 0,
+      "start_char": 56320,
+      "end_char": 57720,
+      "num_chars": 1400,
+      "preview": "dom logs and traces. line 1044: noise content about random logs and traces. line 1045: noise content about random logs and traces. line 1046: noise content about random logs and traces. line 1047: noi",
+      "file": "segments\\level0\\L0_0000044.txt"
+    },
+    "L0_0000045": {
+      "level": 0,
+      "start_char": 57600,
+      "end_char": 59000,
+      "num_chars": 1400,
+      "preview": "aces. line 1067: noise content about random logs and traces. line 1068: noise content about random logs and traces. line 1069: noise content about random logs and traces. line 1070: noise content abou",
+      "file": "segments\\level0\\L0_0000045.txt"
+    },
+    "L0_0000046": {
+      "level": 0,
+      "start_char": 58880,
+      "end_char": 60280,
+      "num_chars": 1400,
+      "preview": ": noise content about random logs and traces. line 1091: noise content about random logs and traces. line 1092: noise content about random logs and traces. line 1093: noise content about random logs a",
+      "file": "segments\\level0\\L0_0000046.txt"
+    },
+    "L0_0000047": {
+      "level": 0,
+      "start_char": 60160,
+      "end_char": 61560,
+      "num_chars": 1400,
+      "preview": " about random logs and traces. line 1114: noise content about random logs and traces. line 1115: noise content about random logs and traces. line 1116: noise content about random logs and traces. line",
+      "file": "segments\\level0\\L0_0000047.txt"
+    },
+    "L0_0000048": {
+      "level": 0,
+      "start_char": 61440,
+      "end_char": 62840,
+      "num_chars": 1400,
+      "preview": "ogs and traces. line 1137: noise content about random logs and traces. line 1138: noise content about random logs and traces. line 1139: noise content about random logs and traces. line 1140: noise co",
+      "file": "segments\\level0\\L0_0000048.txt"
+    },
+    "L0_0000049": {
+      "level": 0,
+      "start_char": 62720,
+      "end_char": 64120,
+      "num_chars": 1400,
+      "preview": " line 1160: noise content about random logs and traces. line 1161: noise content about random logs and traces. line 1162: noise content about random logs and traces. line 1163: noise content about ran",
+      "file": "segments\\level0\\L0_0000049.txt"
+    },
+    "L0_0000050": {
+      "level": 0,
+      "start_char": 64000,
+      "end_char": 65400,
+      "num_chars": 1400,
+      "preview": "se content about random logs and traces. line 1184: noise content about random logs and traces. line 1185: noise content about random logs and traces. line 1186: noise content about random logs and tr",
+      "file": "segments\\level0\\L0_0000050.txt"
+    },
+    "L0_0000051": {
+      "level": 0,
+      "start_char": 65280,
+      "end_char": 66680,
+      "num_chars": 1400,
+      "preview": " additional unrelated records and comments. line 1207: additional unrelated records and comments. line 1208: additional unrelated records and comments. line 1209: additional unrelated records and comm",
+      "file": "segments\\level0\\L0_0000051.txt"
+    },
+    "L0_0000052": {
+      "level": 0,
+      "start_char": 66560,
+      "end_char": 67960,
+      "num_chars": 1400,
+      "preview": "ents. line 1230: additional unrelated records and comments. line 1231: additional unrelated records and comments. line 1232: additional unrelated records and comments. line 1233: additional unrelated ",
+      "file": "segments\\level0\\L0_0000052.txt"
+    },
+    "L0_0000053": {
+      "level": 0,
+      "start_char": 67840,
+      "end_char": 69240,
+      "num_chars": 1400,
+      "preview": "records and comments. line 1254: additional unrelated records and comments. line 1255: additional unrelated records and comments. line 1256: additional unrelated records and comments. line 1257: addit",
+      "file": "segments\\level0\\L0_0000053.txt"
+    },
+    "L0_0000054": {
+      "level": 0,
+      "start_char": 69120,
+      "end_char": 70520,
+      "num_chars": 1400,
+      "preview": "ional unrelated records and comments. line 1278: additional unrelated records and comments. line 1279: additional unrelated records and comments. line 1280: additional unrelated records and comments. ",
+      "file": "segments\\level0\\L0_0000054.txt"
+    },
+    "L0_0000055": {
+      "level": 0,
+      "start_char": 70400,
+      "end_char": 71800,
+      "num_chars": 1400,
+      "preview": "line 1301: additional unrelated records and comments. line 1302: additional unrelated records and comments. line 1303: additional unrelated records and comments. line 1304: additional unrelated record",
+      "file": "segments\\level0\\L0_0000055.txt"
+    },
+    "L0_0000056": {
+      "level": 0,
+      "start_char": 71680,
+      "end_char": 73080,
+      "num_chars": 1400,
+      "preview": "s and comments. line 1325: additional unrelated records and comments. line 1326: additional unrelated records and comments. line 1327: additional unrelated records and comments. line 1328: additional ",
+      "file": "segments\\level0\\L0_0000056.txt"
+    },
+    "L0_0000057": {
+      "level": 0,
+      "start_char": 72960,
+      "end_char": 74360,
+      "num_chars": 1400,
+      "preview": "unrelated records and comments. line 1349: additional unrelated records and comments. line 1350: additional unrelated records and comments. line 1351: additional unrelated records and comments. line 1",
+      "file": "segments\\level0\\L0_0000057.txt"
+    },
+    "L0_0000058": {
+      "level": 0,
+      "start_char": 74240,
+      "end_char": 75640,
+      "num_chars": 1400,
+      "preview": "372: additional unrelated records and comments. line 1373: additional unrelated records and comments. line 1374: additional unrelated records and comments. line 1375: additional unrelated records and ",
+      "file": "segments\\level0\\L0_0000058.txt"
+    },
+    "L0_0000059": {
+      "level": 0,
+      "start_char": 75520,
+      "end_char": 76920,
+      "num_chars": 1400,
+      "preview": "comments. line 1396: additional unrelated records and comments. line 1397: additional unrelated records and comments. line 1398: additional unrelated records and comments. line 1399: additional unrela",
+      "file": "segments\\level0\\L0_0000059.txt"
+    },
+    "L0_0000060": {
+      "level": 0,
+      "start_char": 76800,
+      "end_char": 78200,
+      "num_chars": 1400,
+      "preview": "ted records and comments. line 1420: additional unrelated records and comments. line 1421: additional unrelated records and comments. line 1422: additional unrelated records and comments. line 1423: a",
+      "file": "segments\\level0\\L0_0000060.txt"
+    },
+    "L0_0000061": {
+      "level": 0,
+      "start_char": 78080,
+      "end_char": 79480,
+      "num_chars": 1400,
+      "preview": "dditional unrelated records and comments. line 1444: additional unrelated records and comments. line 1445: additional unrelated records and comments. line 1446: additional unrelated records and commen",
+      "file": "segments\\level0\\L0_0000061.txt"
+    },
+    "L0_0000062": {
+      "level": 0,
+      "start_char": 79360,
+      "end_char": 80760,
+      "num_chars": 1400,
+      "preview": "ts. line 1467: additional unrelated records and comments. line 1468: additional unrelated records and comments. line 1469: additional unrelated records and comments. line 1470: additional unrelated re",
+      "file": "segments\\level0\\L0_0000062.txt"
+    },
+    "L0_0000063": {
+      "level": 0,
+      "start_char": 80640,
+      "end_char": 82040,
+      "num_chars": 1400,
+      "preview": "cords and comments. line 1491: additional unrelated records and comments. line 1492: additional unrelated records and comments. line 1493: additional unrelated records and comments. line 1494: additio",
+      "file": "segments\\level0\\L0_0000063.txt"
+    },
+    "L0_0000064": {
+      "level": 0,
+      "start_char": 81920,
+      "end_char": 83320,
+      "num_chars": 1400,
+      "preview": "nal unrelated records and comments. line 1515: additional unrelated records and comments. line 1516: additional unrelated records and comments. line 1517: additional unrelated records and comments. li",
+      "file": "segments\\level0\\L0_0000064.txt"
+    },
+    "L0_0000065": {
+      "level": 0,
+      "start_char": 83200,
+      "end_char": 84600,
+      "num_chars": 1400,
+      "preview": "ne 1538: additional unrelated records and comments. line 1539: additional unrelated records and comments. line 1540: additional unrelated records and comments. line 1541: additional unrelated records ",
+      "file": "segments\\level0\\L0_0000065.txt"
+    },
+    "L0_0000066": {
+      "level": 0,
+      "start_char": 84480,
+      "end_char": 85880,
+      "num_chars": 1400,
+      "preview": "and comments. line 1562: additional unrelated records and comments. line 1563: additional unrelated records and comments. line 1564: additional unrelated records and comments. line 1565: additional un",
+      "file": "segments\\level0\\L0_0000066.txt"
+    },
+    "L0_0000067": {
+      "level": 0,
+      "start_char": 85760,
+      "end_char": 87160,
+      "num_chars": 1400,
+      "preview": "related records and comments. line 1586: additional unrelated records and comments. line 1587: additional unrelated records and comments. line 1588: additional unrelated records and comments. line 158",
+      "file": "segments\\level0\\L0_0000067.txt"
+    },
+    "L0_0000068": {
+      "level": 0,
+      "start_char": 87040,
+      "end_char": 88440,
+      "num_chars": 1400,
+      "preview": "9: additional unrelated records and comments. line 1610: additional unrelated records and comments. line 1611: additional unrelated records and comments. line 1612: additional unrelated records and co",
+      "file": "segments\\level0\\L0_0000068.txt"
+    },
+    "L0_0000069": {
+      "level": 0,
+      "start_char": 88320,
+      "end_char": 89720,
+      "num_chars": 1400,
+      "preview": "mments. line 1633: additional unrelated records and comments. line 1634: additional unrelated records and comments. line 1635: additional unrelated records and comments. line 1636: additional unrelate",
+      "file": "segments\\level0\\L0_0000069.txt"
+    },
+    "L0_0000070": {
+      "level": 0,
+      "start_char": 89600,
+      "end_char": 91000,
+      "num_chars": 1400,
+      "preview": "d records and comments. line 1657: additional unrelated records and comments. line 1658: additional unrelated records and comments. line 1659: additional unrelated records and comments. line 1660: add",
+      "file": "segments\\level0\\L0_0000070.txt"
+    },
+    "L0_0000071": {
+      "level": 0,
+      "start_char": 90880,
+      "end_char": 92280,
+      "num_chars": 1400,
+      "preview": "itional unrelated records and comments. line 1681: additional unrelated records and comments. line 1682: additional unrelated records and comments. line 1683: additional unrelated records and comments",
+      "file": "segments\\level0\\L0_0000071.txt"
+    },
+    "L0_0000072": {
+      "level": 0,
+      "start_char": 92160,
+      "end_char": 93560,
+      "num_chars": 1400,
+      "preview": ". line 1704: additional unrelated records and comments. line 1705: additional unrelated records and comments. line 1706: additional unrelated records and comments. line 1707: additional unrelated reco",
+      "file": "segments\\level0\\L0_0000072.txt"
+    },
+    "L0_0000073": {
+      "level": 0,
+      "start_char": 93440,
+      "end_char": 94840,
+      "num_chars": 1400,
+      "preview": "rds and comments. line 1728: additional unrelated records and comments. line 1729: additional unrelated records and comments. line 1730: additional unrelated records and comments. line 1731: additiona",
+      "file": "segments\\level0\\L0_0000073.txt"
+    },
+    "L0_0000074": {
+      "level": 0,
+      "start_char": 94720,
+      "end_char": 96120,
+      "num_chars": 1400,
+      "preview": "l unrelated records and comments. line 1752: additional unrelated records and comments. line 1753: additional unrelated records and comments. line 1754: additional unrelated records and comments. line",
+      "file": "segments\\level0\\L0_0000074.txt"
+    },
+    "L0_0000075": {
+      "level": 0,
+      "start_char": 96000,
+      "end_char": 97400,
+      "num_chars": 1400,
+      "preview": " 1775: additional unrelated records and comments. line 1776: additional unrelated records and comments. line 1777: additional unrelated records and comments. line 1778: additional unrelated records an",
+      "file": "segments\\level0\\L0_0000075.txt"
+    },
+    "L0_0000076": {
+      "level": 0,
+      "start_char": 97280,
+      "end_char": 98680,
+      "num_chars": 1400,
+      "preview": "d comments. line 1799: additional unrelated records and comments. line 1800: additional unrelated records and comments. line 1801: additional unrelated records and comments. line 1802: additional unre",
+      "file": "segments\\level0\\L0_0000076.txt"
+    },
+    "L0_0000077": {
+      "level": 0,
+      "start_char": 98560,
+      "end_char": 99960,
+      "num_chars": 1400,
+      "preview": "lated records and comments. line 1823: additional unrelated records and comments. line 1824: additional unrelated records and comments. line 1825: additional unrelated records and comments. line 1826:",
+      "file": "segments\\level0\\L0_0000077.txt"
+    },
+    "L0_0000078": {
+      "level": 0,
+      "start_char": 99840,
+      "end_char": 101240,
+      "num_chars": 1400,
+      "preview": " additional unrelated records and comments. line 1847: additional unrelated records and comments. line 1848: additional unrelated records and comments. line 1849: additional unrelated records and comm",
+      "file": "segments\\level0\\L0_0000078.txt"
+    },
+    "L0_0000079": {
+      "level": 0,
+      "start_char": 101120,
+      "end_char": 102520,
+      "num_chars": 1400,
+      "preview": "ents. line 1870: additional unrelated records and comments. line 1871: additional unrelated records and comments. line 1872: additional unrelated records and comments. line 1873: additional unrelated ",
+      "file": "segments\\level0\\L0_0000079.txt"
+    },
+    "L0_0000080": {
+      "level": 0,
+      "start_char": 102400,
+      "end_char": 103800,
+      "num_chars": 1400,
+      "preview": "records and comments. line 1894: additional unrelated records and comments. line 1895: additional unrelated records and comments. line 1896: additional unrelated records and comments. line 1897: addit",
+      "file": "segments\\level0\\L0_0000080.txt"
+    },
+    "L0_0000081": {
+      "level": 0,
+      "start_char": 103680,
+      "end_char": 105080,
+      "num_chars": 1400,
+      "preview": "ional unrelated records and comments. line 1918: additional unrelated records and comments. line 1919: additional unrelated records and comments. line 1920: additional unrelated records and comments. ",
+      "file": "segments\\level0\\L0_0000081.txt"
+    },
+    "L0_0000082": {
+      "level": 0,
+      "start_char": 104960,
+      "end_char": 106360,
+      "num_chars": 1400,
+      "preview": "line 1941: additional unrelated records and comments. line 1942: additional unrelated records and comments. line 1943: additional unrelated records and comments. line 1944: additional unrelated record",
+      "file": "segments\\level0\\L0_0000082.txt"
+    },
+    "L0_0000083": {
+      "level": 0,
+      "start_char": 106240,
+      "end_char": 107640,
+      "num_chars": 1400,
+      "preview": "s and comments. line 1965: additional unrelated records and comments. line 1966: additional unrelated records and comments. line 1967: additional unrelated records and comments. line 1968: additional ",
+      "file": "segments\\level0\\L0_0000083.txt"
+    },
+    "L0_0000084": {
+      "level": 0,
+      "start_char": 107520,
+      "end_char": 108920,
+      "num_chars": 1400,
+      "preview": "unrelated records and comments. line 1989: additional unrelated records and comments. line 1990: additional unrelated records and comments. line 1991: additional unrelated records and comments. line 1",
+      "file": "segments\\level0\\L0_0000084.txt"
+    },
+    "L0_0000085": {
+      "level": 0,
+      "start_char": 108800,
+      "end_char": 110200,
+      "num_chars": 1400,
+      "preview": "012: additional unrelated records and comments. line 2013: additional unrelated records and comments. line 2014: additional unrelated records and comments. line 2015: additional unrelated records and ",
+      "file": "segments\\level0\\L0_0000085.txt"
+    },
+    "L0_0000086": {
+      "level": 0,
+      "start_char": 110080,
+      "end_char": 111480,
+      "num_chars": 1400,
+      "preview": "comments. line 2036: additional unrelated records and comments. line 2037: additional unrelated records and comments. line 2038: additional unrelated records and comments. line 2039: additional unrela",
+      "file": "segments\\level0\\L0_0000086.txt"
+    },
+    "L0_0000087": {
+      "level": 0,
+      "start_char": 111360,
+      "end_char": 112760,
+      "num_chars": 1400,
+      "preview": "ted records and comments. line 2060: additional unrelated records and comments. line 2061: additional unrelated records and comments. line 2062: additional unrelated records and comments. line 2063: a",
+      "file": "segments\\level0\\L0_0000087.txt"
+    },
+    "L0_0000088": {
+      "level": 0,
+      "start_char": 112640,
+      "end_char": 114040,
+      "num_chars": 1400,
+      "preview": "dditional unrelated records and comments. line 2084: additional unrelated records and comments. line 2085: additional unrelated records and comments. line 2086: additional unrelated records and commen",
+      "file": "segments\\level0\\L0_0000088.txt"
+    },
+    "L0_0000089": {
+      "level": 0,
+      "start_char": 113920,
+      "end_char": 115320,
+      "num_chars": 1400,
+      "preview": "ts. line 2107: additional unrelated records and comments. line 2108: additional unrelated records and comments. line 2109: additional unrelated records and comments. line 2110: additional unrelated re",
+      "file": "segments\\level0\\L0_0000089.txt"
+    },
+    "L0_0000090": {
+      "level": 0,
+      "start_char": 115200,
+      "end_char": 116600,
+      "num_chars": 1400,
+      "preview": "cords and comments. line 2131: additional unrelated records and comments. line 2132: additional unrelated records and comments. line 2133: additional unrelated records and comments. line 2134: additio",
+      "file": "segments\\level0\\L0_0000090.txt"
+    },
+    "L0_0000091": {
+      "level": 0,
+      "start_char": 116480,
+      "end_char": 117880,
+      "num_chars": 1400,
+      "preview": "nal unrelated records and comments. line 2155: additional unrelated records and comments. line 2156: additional unrelated records and comments. line 2157: additional unrelated records and comments. li",
+      "file": "segments\\level0\\L0_0000091.txt"
+    },
+    "L0_0000092": {
+      "level": 0,
+      "start_char": 117760,
+      "end_char": 119160,
+      "num_chars": 1400,
+      "preview": "ne 2178: additional unrelated records and comments. line 2179: additional unrelated records and comments. line 2180: additional unrelated records and comments. line 2181: additional unrelated records ",
+      "file": "segments\\level0\\L0_0000092.txt"
+    },
+    "L0_0000093": {
+      "level": 0,
+      "start_char": 119040,
+      "end_char": 120440,
+      "num_chars": 1400,
+      "preview": "and comments. line 2202: additional unrelated records and comments. line 2203: additional unrelated records and comments. line 2204: additional unrelated records and comments. line 2205: additional un",
+      "file": "segments\\level0\\L0_0000093.txt"
+    },
+    "L0_0000094": {
+      "level": 0,
+      "start_char": 120320,
+      "end_char": 121720,
+      "num_chars": 1400,
+      "preview": "related records and comments. line 2226: additional unrelated records and comments. line 2227: additional unrelated records and comments. line 2228: additional unrelated records and comments. line 222",
+      "file": "segments\\level0\\L0_0000094.txt"
+    },
+    "L0_0000095": {
+      "level": 0,
+      "start_char": 121600,
+      "end_char": 123000,
+      "num_chars": 1400,
+      "preview": "9: additional unrelated records and comments. line 2250: additional unrelated records and comments. line 2251: additional unrelated records and comments. line 2252: additional unrelated records and co",
+      "file": "segments\\level0\\L0_0000095.txt"
+    },
+    "L0_0000096": {
+      "level": 0,
+      "start_char": 122880,
+      "end_char": 124280,
+      "num_chars": 1400,
+      "preview": "mments. line 2273: additional unrelated records and comments. line 2274: additional unrelated records and comments. line 2275: additional unrelated records and comments. line 2276: additional unrelate",
+      "file": "segments\\level0\\L0_0000096.txt"
+    },
+    "L0_0000097": {
+      "level": 0,
+      "start_char": 124160,
+      "end_char": 125560,
+      "num_chars": 1400,
+      "preview": "d records and comments. line 2297: additional unrelated records and comments. line 2298: additional unrelated records and comments. line 2299: additional unrelated records and comments. line 2300: add",
+      "file": "segments\\level0\\L0_0000097.txt"
+    },
+    "L0_0000098": {
+      "level": 0,
+      "start_char": 125440,
+      "end_char": 126840,
+      "num_chars": 1400,
+      "preview": "itional unrelated records and comments. line 2321: additional unrelated records and comments. line 2322: additional unrelated records and comments. line 2323: additional unrelated records and comments",
+      "file": "segments\\level0\\L0_0000098.txt"
+    },
+    "L0_0000099": {
+      "level": 0,
+      "start_char": 126720,
+      "end_char": 128120,
+      "num_chars": 1400,
+      "preview": ". line 2344: additional unrelated records and comments. line 2345: additional unrelated records and comments. line 2346: additional unrelated records and comments. line 2347: additional unrelated reco",
+      "file": "segments\\level0\\L0_0000099.txt"
+    },
+    "L0_0000100": {
+      "level": 0,
+      "start_char": 128000,
+      "end_char": 129400,
+      "num_chars": 1400,
+      "preview": "rds and comments. line 2368: additional unrelated records and comments. line 2369: additional unrelated records and comments. line 2370: additional unrelated records and comments. line 2371: additiona",
+      "file": "segments\\level0\\L0_0000100.txt"
+    },
+    "L0_0000101": {
+      "level": 0,
+      "start_char": 129280,
+      "end_char": 129746,
+      "num_chars": 466,
+      "preview": "l unrelated records and comments. line 2392: additional unrelated records and comments. line 2393: additional unrelated records and comments. line 2394: additional unrelated records and comments. line",
+      "file": "segments\\level0\\L0_0000101.txt"
+    },
+    "L1_0000000": {
+      "level": 1,
+      "start_char": 0,
+      "end_char": 5240,
+      "num_chars": 5240,
+      "preview": "header: synthetic long context line 0: noise content about random logs and traces. line 1: noise content about random logs and traces. line 2: noise content about random logs and traces. line 3: noise ... e 72: noise content about random logs and traces. line 73: noise content about random logs and traces. line 74: noise content about random logs and traces. line 75: noise content about random log",
+      "children": [
+        "L0_0000000",
+        "L0_0000001",
+        "L0_0000002",
+        "L0_0000003"
+      ]
+    },
+    "L1_0000001": {
+      "level": 1,
+      "start_char": 5120,
+      "end_char": 10360,
+      "num_chars": 5240,
+      "preview": "ise content about random logs and traces. line 97: noise content about random logs and traces. line 98: noise content about random logs and traces. line 99: noise content about random logs and traces. ... nt about random logs and traces. line 168: noise content about random logs and traces. line 169: noise content about random logs and traces. line 170: noise content about random logs and traces. ",
+      "children": [
+        "L0_0000004",
+        "L0_0000005",
+        "L0_0000006",
+        "L0_0000007"
+      ]
+    },
+    "L1_0000002": {
+      "level": 1,
+      "start_char": 10240,
+      "end_char": 15480,
+      "num_chars": 5240,
+      "preview": "191: noise content about random logs and traces. line 192: noise content about random logs and traces. line 193: noise content about random logs and traces. line 194: noise content about random logs a ... oise content about random logs and traces. line 263: noise content about random logs and traces. line 264: noise content about random logs and traces. line 265: noise content about random logs an",
+      "children": [
+        "L0_0000008",
+        "L0_0000009",
+        "L0_0000010",
+        "L0_0000011"
+      ]
+    },
+    "L1_0000003": {
+      "level": 1,
+      "start_char": 15360,
+      "end_char": 20600,
+      "num_chars": 5240,
+      "preview": "ces. line 286: noise content about random logs and traces. line 287: noise content about random logs and traces. line 288: noise content about random logs and traces. line 289: noise content about ran ... ine 357: noise content about random logs and traces. line 358: noise content about random logs and traces. line 359: noise content about random logs and traces. line 360: noise content about rand",
+      "children": [
+        "L0_0000012",
+        "L0_0000013",
+        "L0_0000014",
+        "L0_0000015"
+      ]
+    },
+    "L1_0000004": {
+      "level": 1,
+      "start_char": 20480,
+      "end_char": 25720,
+      "num_chars": 5240,
+      "preview": "gs and traces. line 381: noise content about random logs and traces. line 382: noise content about random logs and traces. line 383: noise content about random logs and traces. line 384: noise content ...  traces. line 452: noise content about random logs and traces. line 453: noise content about random logs and traces. line 454: noise content about random logs and traces. line 455: noise content ",
+      "children": [
+        "L0_0000016",
+        "L0_0000017",
+        "L0_0000018",
+        "L0_0000019"
+      ]
+    },
+    "L1_0000005": {
+      "level": 1,
+      "start_char": 25600,
+      "end_char": 30840,
+      "num_chars": 5240,
+      "preview": " random logs and traces. line 476: noise content about random logs and traces. line 477: noise content about random logs and traces. line 478: noise content about random logs and traces. line 479: noi ... m logs and traces. line 547: noise content about random logs and traces. line 548: noise content about random logs and traces. line 549: noise content about random logs and traces. line 550: nois",
+      "children": [
+        "L0_0000020",
+        "L0_0000021",
+        "L0_0000022",
+        "L0_0000023"
+      ]
+    },
+    "L1_0000006": {
+      "level": 1,
+      "start_char": 30720,
+      "end_char": 35960,
+      "num_chars": 5240,
+      "preview": "tent about random logs and traces. line 571: noise content about random logs and traces. line 572: noise content about random logs and traces. line 573: noise content about random logs and traces. lin ... bout random logs and traces. line 642: noise content about random logs and traces. line 643: noise content about random logs and traces. line 644: noise content about random logs and traces. line",
+      "children": [
+        "L0_0000024",
+        "L0_0000025",
+        "L0_0000026",
+        "L0_0000027"
+      ]
+    },
+    "L1_0000007": {
+      "level": 1,
+      "start_char": 35840,
+      "end_char": 41080,
+      "num_chars": 5240,
+      "preview": " noise content about random logs and traces. line 666: noise content about random logs and traces. line 667: noise content about random logs and traces. line 668: noise content about random logs and t ...  content about random logs and traces. line 737: noise content about random logs and traces. line 738: noise content about random logs and traces. line 739: noise content about random logs and tr",
+      "children": [
+        "L0_0000028",
+        "L0_0000029",
+        "L0_0000030",
+        "L0_0000031"
+      ]
+    },
+    "L1_0000008": {
+      "level": 1,
+      "start_char": 40960,
+      "end_char": 46200,
+      "num_chars": 5240,
+      "preview": " line 760: noise content about random logs and traces. line 761: noise content about random logs and traces. line 762: noise content about random logs and traces. line 763: noise content about random  ... 831: noise content about random logs and traces. line 832: noise content about random logs and traces. line 833: noise content about random logs and traces. line 834: noise content about random l",
+      "children": [
+        "L0_0000032",
+        "L0_0000033",
+        "L0_0000034",
+        "L0_0000035"
+      ]
+    },
+    "L1_0000009": {
+      "level": 1,
+      "start_char": 46080,
+      "end_char": 51320,
+      "num_chars": 5240,
+      "preview": "nd traces. line 855: noise content about random logs and traces. line 856: noise content about random logs and traces. line 857: noise content about random logs and traces. line 858: noise content abo ... ces. line 926: noise content about random logs and traces. line 927: noise content about random logs and traces. line 928: noise content about random logs and traces. line 929: noise content abou",
+      "children": [
+        "L0_0000036",
+        "L0_0000037",
+        "L0_0000038",
+        "L0_0000039"
+      ]
+    },
+    "L1_0000010": {
+      "level": 1,
+      "start_char": 51200,
+      "end_char": 56440,
+      "num_chars": 5240,
+      "preview": "dom logs and traces. line 950: noise content about random logs and traces. line 951: noise content about random logs and traces. line 952: noise content about random logs and traces. line 953: noise c ... ntent about random logs and traces. line 1021: noise content about random logs and traces. line 1022: noise content about random logs and traces. line 1023: noise content about random logs and tr",
+      "children": [
+        "L0_0000040",
+        "L0_0000041",
+        "L0_0000042",
+        "L0_0000043"
+      ]
+    },
+    "L1_0000011": {
+      "level": 1,
+      "start_char": 56320,
+      "end_char": 61560,
+      "num_chars": 5240,
+      "preview": "dom logs and traces. line 1044: noise content about random logs and traces. line 1045: noise content about random logs and traces. line 1046: noise content about random logs and traces. line 1047: noi ...  about random logs and traces. line 1114: noise content about random logs and traces. line 1115: noise content about random logs and traces. line 1116: noise content about random logs and traces.",
+      "children": [
+        "L0_0000044",
+        "L0_0000045",
+        "L0_0000046",
+        "L0_0000047"
+      ]
+    },
+    "L1_0000012": {
+      "level": 1,
+      "start_char": 61440,
+      "end_char": 66680,
+      "num_chars": 5240,
+      "preview": "ogs and traces. line 1137: noise content about random logs and traces. line 1138: noise content about random logs and traces. line 1139: noise content about random logs and traces. line 1140: noise co ...  additional unrelated records and comments. line 1207: additional unrelated records and comments. line 1208: additional unrelated records and comments. line 1209: additional unrelated records and",
+      "children": [
+        "L0_0000048",
+        "L0_0000049",
+        "L0_0000050",
+        "L0_0000051"
+      ]
+    },
+    "L1_0000013": {
+      "level": 1,
+      "start_char": 66560,
+      "end_char": 71800,
+      "num_chars": 5240,
+      "preview": "ents. line 1230: additional unrelated records and comments. line 1231: additional unrelated records and comments. line 1232: additional unrelated records and comments. line 1233: additional unrelated  ... line 1301: additional unrelated records and comments. line 1302: additional unrelated records and comments. line 1303: additional unrelated records and comments. line 1304: additional unrelated r",
+      "children": [
+        "L0_0000052",
+        "L0_0000053",
+        "L0_0000054",
+        "L0_0000055"
+      ]
+    },
+    "L1_0000014": {
+      "level": 1,
+      "start_char": 71680,
+      "end_char": 76920,
+      "num_chars": 5240,
+      "preview": "s and comments. line 1325: additional unrelated records and comments. line 1326: additional unrelated records and comments. line 1327: additional unrelated records and comments. line 1328: additional  ... comments. line 1396: additional unrelated records and comments. line 1397: additional unrelated records and comments. line 1398: additional unrelated records and comments. line 1399: additional u",
+      "children": [
+        "L0_0000056",
+        "L0_0000057",
+        "L0_0000058",
+        "L0_0000059"
+      ]
+    },
+    "L1_0000015": {
+      "level": 1,
+      "start_char": 76800,
+      "end_char": 82040,
+      "num_chars": 5240,
+      "preview": "ted records and comments. line 1420: additional unrelated records and comments. line 1421: additional unrelated records and comments. line 1422: additional unrelated records and comments. line 1423: a ... cords and comments. line 1491: additional unrelated records and comments. line 1492: additional unrelated records and comments. line 1493: additional unrelated records and comments. line 1494: ad",
+      "children": [
+        "L0_0000060",
+        "L0_0000061",
+        "L0_0000062",
+        "L0_0000063"
+      ]
+    },
+    "L1_0000016": {
+      "level": 1,
+      "start_char": 81920,
+      "end_char": 87160,
+      "num_chars": 5240,
+      "preview": "nal unrelated records and comments. line 1515: additional unrelated records and comments. line 1516: additional unrelated records and comments. line 1517: additional unrelated records and comments. li ... related records and comments. line 1586: additional unrelated records and comments. line 1587: additional unrelated records and comments. line 1588: additional unrelated records and comments. lin",
+      "children": [
+        "L0_0000064",
+        "L0_0000065",
+        "L0_0000066",
+        "L0_0000067"
+      ]
+    },
+    "L1_0000017": {
+      "level": 1,
+      "start_char": 87040,
+      "end_char": 92280,
+      "num_chars": 5240,
+      "preview": "9: additional unrelated records and comments. line 1610: additional unrelated records and comments. line 1611: additional unrelated records and comments. line 1612: additional unrelated records and co ... itional unrelated records and comments. line 1681: additional unrelated records and comments. line 1682: additional unrelated records and comments. line 1683: additional unrelated records and com",
+      "children": [
+        "L0_0000068",
+        "L0_0000069",
+        "L0_0000070",
+        "L0_0000071"
+      ]
+    },
+    "L1_0000018": {
+      "level": 1,
+      "start_char": 92160,
+      "end_char": 97400,
+      "num_chars": 5240,
+      "preview": ". line 1704: additional unrelated records and comments. line 1705: additional unrelated records and comments. line 1706: additional unrelated records and comments. line 1707: additional unrelated reco ...  1775: additional unrelated records and comments. line 1776: additional unrelated records and comments. line 1777: additional unrelated records and comments. line 1778: additional unrelated recor",
+      "children": [
+        "L0_0000072",
+        "L0_0000073",
+        "L0_0000074",
+        "L0_0000075"
+      ]
+    },
+    "L1_0000019": {
+      "level": 1,
+      "start_char": 97280,
+      "end_char": 102520,
+      "num_chars": 5240,
+      "preview": "d comments. line 1799: additional unrelated records and comments. line 1800: additional unrelated records and comments. line 1801: additional unrelated records and comments. line 1802: additional unre ... ents. line 1870: additional unrelated records and comments. line 1871: additional unrelated records and comments. line 1872: additional unrelated records and comments. line 1873: additional unrel",
+      "children": [
+        "L0_0000076",
+        "L0_0000077",
+        "L0_0000078",
+        "L0_0000079"
+      ]
+    },
+    "L1_0000020": {
+      "level": 1,
+      "start_char": 102400,
+      "end_char": 107640,
+      "num_chars": 5240,
+      "preview": "records and comments. line 1894: additional unrelated records and comments. line 1895: additional unrelated records and comments. line 1896: additional unrelated records and comments. line 1897: addit ... s and comments. line 1965: additional unrelated records and comments. line 1966: additional unrelated records and comments. line 1967: additional unrelated records and comments. line 1968: additi",
+      "children": [
+        "L0_0000080",
+        "L0_0000081",
+        "L0_0000082",
+        "L0_0000083"
+      ]
+    },
+    "L1_0000021": {
+      "level": 1,
+      "start_char": 107520,
+      "end_char": 112760,
+      "num_chars": 5240,
+      "preview": "unrelated records and comments. line 1989: additional unrelated records and comments. line 1990: additional unrelated records and comments. line 1991: additional unrelated records and comments. line 1 ... ted records and comments. line 2060: additional unrelated records and comments. line 2061: additional unrelated records and comments. line 2062: additional unrelated records and comments. line 20",
+      "children": [
+        "L0_0000084",
+        "L0_0000085",
+        "L0_0000086",
+        "L0_0000087"
+      ]
+    },
+    "L1_0000022": {
+      "level": 1,
+      "start_char": 112640,
+      "end_char": 117880,
+      "num_chars": 5240,
+      "preview": "dditional unrelated records and comments. line 2084: additional unrelated records and comments. line 2085: additional unrelated records and comments. line 2086: additional unrelated records and commen ... nal unrelated records and comments. line 2155: additional unrelated records and comments. line 2156: additional unrelated records and comments. line 2157: additional unrelated records and comment",
+      "children": [
+        "L0_0000088",
+        "L0_0000089",
+        "L0_0000090",
+        "L0_0000091"
+      ]
+    },
+    "L1_0000023": {
+      "level": 1,
+      "start_char": 117760,
+      "end_char": 123000,
+      "num_chars": 5240,
+      "preview": "ne 2178: additional unrelated records and comments. line 2179: additional unrelated records and comments. line 2180: additional unrelated records and comments. line 2181: additional unrelated records  ... 9: additional unrelated records and comments. line 2250: additional unrelated records and comments. line 2251: additional unrelated records and comments. line 2252: additional unrelated records a",
+      "children": [
+        "L0_0000092",
+        "L0_0000093",
+        "L0_0000094",
+        "L0_0000095"
+      ]
+    },
+    "L1_0000024": {
+      "level": 1,
+      "start_char": 122880,
+      "end_char": 128120,
+      "num_chars": 5240,
+      "preview": "mments. line 2273: additional unrelated records and comments. line 2274: additional unrelated records and comments. line 2275: additional unrelated records and comments. line 2276: additional unrelate ... . line 2344: additional unrelated records and comments. line 2345: additional unrelated records and comments. line 2346: additional unrelated records and comments. line 2347: additional unrelated",
+      "children": [
+        "L0_0000096",
+        "L0_0000097",
+        "L0_0000098",
+        "L0_0000099"
+      ]
+    },
+    "L1_0000025": {
+      "level": 1,
+      "start_char": 128000,
+      "end_char": 129746,
+      "num_chars": 1746,
+      "preview": "rds and comments. line 2368: additional unrelated records and comments. line 2369: additional unrelated records and comments. line 2370: additional unrelated records and comments. line 2371: additiona ... l unrelated records and comments. line 2392: additional unrelated records and comments. line 2393: additional unrelated records and comments. line 2394: additional unrelated records and comments.",
+      "children": [
+        "L0_0000100",
+        "L0_0000101"
+      ]
+    },
+    "L2_0000000": {
+      "level": 2,
+      "start_char": 0,
+      "end_char": 20600,
+      "num_chars": 20600,
+      "preview": "header: synthetic long context line 0: noise content about random logs and traces. line 1: noise content about random logs and traces. line 2: noise content about random logs and traces. line 3: noise ... e 72: noise content about random logs and traces. line 73: noise content about random logs and traces. line 74: noise content about random logs and traces. line 75: noise content about random log",
+      "children": [
+        "L1_0000000",
+        "L1_0000001",
+        "L1_0000002",
+        "L1_0000003"
+      ]
+    },
+    "L2_0000001": {
+      "level": 2,
+      "start_char": 20480,
+      "end_char": 41080,
+      "num_chars": 20600,
+      "preview": "gs and traces. line 381: noise content about random logs and traces. line 382: noise content about random logs and traces. line 383: noise content about random logs and traces. line 384: noise content ...  traces. line 452: noise content about random logs and traces. line 453: noise content about random logs and traces. line 454: noise content about random logs and traces. line 455: noise content ",
+      "children": [
+        "L1_0000004",
+        "L1_0000005",
+        "L1_0000006",
+        "L1_0000007"
+      ]
+    },
+    "L2_0000002": {
+      "level": 2,
+      "start_char": 40960,
+      "end_char": 61560,
+      "num_chars": 20600,
+      "preview": " line 760: noise content about random logs and traces. line 761: noise content about random logs and traces. line 762: noise content about random logs and traces. line 763: noise content about random  ... 831: noise content about random logs and traces. line 832: noise content about random logs and traces. line 833: noise content about random logs and traces. line 834: noise content about random l",
+      "children": [
+        "L1_0000008",
+        "L1_0000009",
+        "L1_0000010",
+        "L1_0000011"
+      ]
+    },
+    "L2_0000003": {
+      "level": 2,
+      "start_char": 61440,
+      "end_char": 82040,
+      "num_chars": 20600,
+      "preview": "ogs and traces. line 1137: noise content about random logs and traces. line 1138: noise content about random logs and traces. line 1139: noise content about random logs and traces. line 1140: noise co ...  additional unrelated records and comments. line 1207: additional unrelated records and comments. line 1208: additional unrelated records and comments. line 1209: additional unrelated records and",
+      "children": [
+        "L1_0000012",
+        "L1_0000013",
+        "L1_0000014",
+        "L1_0000015"
+      ]
+    },
+    "L2_0000004": {
+      "level": 2,
+      "start_char": 81920,
+      "end_char": 102520,
+      "num_chars": 20600,
+      "preview": "nal unrelated records and comments. line 1515: additional unrelated records and comments. line 1516: additional unrelated records and comments. line 1517: additional unrelated records and comments. li ... related records and comments. line 1586: additional unrelated records and comments. line 1587: additional unrelated records and comments. line 1588: additional unrelated records and comments. lin",
+      "children": [
+        "L1_0000016",
+        "L1_0000017",
+        "L1_0000018",
+        "L1_0000019"
+      ]
+    },
+    "L2_0000005": {
+      "level": 2,
+      "start_char": 102400,
+      "end_char": 123000,
+      "num_chars": 20600,
+      "preview": "records and comments. line 1894: additional unrelated records and comments. line 1895: additional unrelated records and comments. line 1896: additional unrelated records and comments. line 1897: addit ... s and comments. line 1965: additional unrelated records and comments. line 1966: additional unrelated records and comments. line 1967: additional unrelated records and comments. line 1968: additi",
+      "children": [
+        "L1_0000020",
+        "L1_0000021",
+        "L1_0000022",
+        "L1_0000023"
+      ]
+    },
+    "L2_0000006": {
+      "level": 2,
+      "start_char": 122880,
+      "end_char": 129746,
+      "num_chars": 6866,
+      "preview": "mments. line 2273: additional unrelated records and comments. line 2274: additional unrelated records and comments. line 2275: additional unrelated records and comments. line 2276: additional unrelate ... . line 2344: additional unrelated records and comments. line 2345: additional unrelated records and comments. line 2346: additional unrelated records and comments. line 2347: additional unrelated",
+      "children": [
+        "L1_0000024",
+        "L1_0000025"
+      ]
+    },
+    "L3_0000000": {
+      "level": 3,
+      "start_char": 0,
+      "end_char": 82040,
+      "num_chars": 82040,
+      "preview": "header: synthetic long context line 0: noise content about random logs and traces. line 1: noise content about random logs and traces. line 2: noise content about random logs and traces. line 3: noise ... e 72: noise content about random logs and traces. line 73: noise content about random logs and traces. line 74: noise content about random logs and traces. line 75: noise content about random log",
+      "children": [
+        "L2_0000000",
+        "L2_0000001",
+        "L2_0000002",
+        "L2_0000003"
+      ]
+    },
+    "L3_0000001": {
+      "level": 3,
+      "start_char": 81920,
+      "end_char": 129746,
+      "num_chars": 47826,
+      "preview": "nal unrelated records and comments. line 1515: additional unrelated records and comments. line 1516: additional unrelated records and comments. line 1517: additional unrelated records and comments. li ... related records and comments. line 1586: additional unrelated records and comments. line 1587: additional unrelated records and comments. line 1588: additional unrelated records and comments. lin",
+      "children": [
+        "L2_0000004",
+        "L2_0000005",
+        "L2_0000006"
+      ]
+    },
+    "L4_0000000": {
+      "level": 4,
+      "start_char": 0,
+      "end_char": 129746,
+      "num_chars": 129746,
+      "preview": "header: synthetic long context line 0: noise content about random logs and traces. line 1: noise content about random logs and traces. line 2: noise content about random logs and traces. line 3: noise ... e 72: noise content about random logs and traces. line 73: noise content about random logs and traces. line 74: noise content about random logs and traces. line 75: noise content about random log",
+      "children": [
+        "L3_0000000",
+        "L3_0000001"
+      ]
+    }
+  }
+}
