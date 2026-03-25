@@ -1,0 +1,63 @@
+﻿{
+  "servers": [
+    {
+      "alias": "ofs",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "D:/AINet/LLM/M-A-P/RLM"
+      ],
+      "cwd": "D:/AINet/LLM/M-A-P/RLM"
+    },
+    {
+      "alias": "omemory",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "cwd": "D:/AINet/LLM/M-A-P/RLM"
+    },
+    {
+      "alias": "ofetch",
+      "command": [
+        "uvx",
+        "mcp-server-fetch"
+      ],
+      "cwd": "D:/AINet/LLM/M-A-P/RLM"
+    },
+    {
+      "alias": "ogit",
+      "command": [
+        "uvx",
+        "mcp-server-git",
+        "--repository",
+        "D:/AINet/LLM/M-A-P/RLM"
+      ],
+      "cwd": "D:/AINet/LLM/M-A-P/RLM"
+    },
+    {
+      "alias": "oseq",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "cwd": "D:/AINet/LLM/M-A-P/RLM"
+    }
+  ],
+  "root_extra_object_fanout": [
+    {
+      "object_name": "oseq/sequential_thinking",
+      "payload": {
+        "thought": "Plan retrieval angles for LongBench-v2 question.",
+        "nextThoughtNeeded": false,
+        "thoughtNumber": 1,
+        "totalThoughts": 1
+      },
+      "timeout_seconds": 20
+    }
+  ],
+  "leaf_extra_object_fanout": []
+}

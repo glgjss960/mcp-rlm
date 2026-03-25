@@ -46,16 +46,18 @@ class WritePolicy:
             return True
         if intent.reason in self._required_reasons:
             return True
-        if intent.context_usage >= self.context_pressure_threshold:
-            return True
-        if intent.reason == WriteReason.VALUE_EVENT and intent.confidence >= self.value_confidence_threshold:
-            return True
         if (
             self.min_interval_seconds > 0.0
             and last_write_time is not None
             and monotonic() - last_write_time < self.min_interval_seconds
         ):
             return False
+        if intent.reason == WriteReason.CONTEXT_PRESSURE:
+            return intent.context_usage >= self.context_pressure_threshold
+        if intent.context_usage >= self.context_pressure_threshold:
+            return True
+        if intent.reason == WriteReason.VALUE_EVENT and intent.confidence >= self.value_confidence_threshold:
+            return True
         return False
 
     async def commit(
@@ -77,3 +79,4 @@ class WritePolicy:
             confidence=intent.confidence,
             expected_version=intent.expected_version,
         )
+

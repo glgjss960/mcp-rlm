@@ -1,0 +1,1 @@
+{"episode_id": "ep_76b6e22a00d3", "group_id": "grp_606d250f0263", "step_id": "step_3804f3129882", "step_index": 1, "history": [], "input_payload": {"object_name": "ctx/context_stats", "timeout_seconds": 30.0}, "target_action_type": "CALL_OBJECT", "target_action_name": "call_object", "target_result": null, "ok": false}

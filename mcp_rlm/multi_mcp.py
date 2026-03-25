@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
@@ -15,6 +15,8 @@ class MCPServerSpec:
     cwd: Optional[str] = None
     env: Optional[Dict[str, str]] = None
     max_concurrency: int = 32
+    prefer_official_sdk: bool = True
+    strict_official_sdk: bool = False
 
 
 class MultiServerMCPClient:
@@ -25,22 +27,24 @@ class MultiServerMCPClient:
 
     def __init__(self, specs: List[MCPServerSpec], *, default_alias: Optional[str] = None) -> None:
         if not specs:
-            raise ValueError("specs must not be empty")
+            raise ValueError('specs must not be empty')
 
         self._clients: Dict[str, StdioMCPClient] = {}
         for spec in specs:
             if spec.alias in self._clients:
-                raise ValueError(f"Duplicate alias: {spec.alias}")
+                raise ValueError(f'Duplicate alias: {spec.alias}')
             self._clients[spec.alias] = StdioMCPClient(
                 command=list(spec.command),
                 cwd=spec.cwd,
                 env=spec.env,
                 max_concurrency=spec.max_concurrency,
+                prefer_official_sdk=spec.prefer_official_sdk,
+                strict_official_sdk=spec.strict_official_sdk,
             )
 
         self.default_alias = default_alias
         if self.default_alias and self.default_alias not in self._clients:
-            raise ValueError(f"default_alias not found in specs: {self.default_alias}")
+            raise ValueError(f'default_alias not found in specs: {self.default_alias}')
 
     async def start(self) -> None:
         await asyncio.gather(*(client.start() for client in self._clients.values()))
@@ -48,7 +52,7 @@ class MultiServerMCPClient:
     async def close(self) -> None:
         await asyncio.gather(*(client.close() for client in self._clients.values()), return_exceptions=True)
 
-    async def __aenter__(self) -> "MultiServerMCPClient":
+    async def __aenter__(self) -> 'MultiServerMCPClient':
         await self.start()
         return self
 
@@ -59,7 +63,7 @@ class MultiServerMCPClient:
         out: List[str] = []
         for alias, client in self._clients.items():
             tools = await client.list_tools()
-            out.extend([f"{alias}/{tool}" for tool in tools])
+            out.extend([f'{alias}/{tool}' for tool in tools])
         return sorted(out)
 
     async def call(self, call: MCPCall, ctx: MCPInvocationContext) -> MCPResult:
@@ -72,12 +76,12 @@ class MultiServerMCPClient:
         return await asyncio.gather(*tasks)
 
     def _route(self, object_name: str) -> tuple[str, str]:
-        if "/" in object_name:
-            alias, tool_name = object_name.split("/", 1)
+        if '/' in object_name:
+            alias, tool_name = object_name.split('/', 1)
             if alias not in self._clients:
-                raise KeyError(f"Unknown MCP server alias: {alias}")
+                raise KeyError(f'Unknown MCP server alias: {alias}')
             if not tool_name:
-                raise ValueError(f"Invalid object name: {object_name}")
+                raise ValueError(f'Invalid object name: {object_name}')
             return alias, tool_name
 
         if self.default_alias is None:

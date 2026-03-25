@@ -1,0 +1,31 @@
+[
+  {
+    "iteration": 0,
+    "policy_config": {
+      "mode": "heuristic",
+      "openrouter_app_name": "mcp-rlm",
+      "hf_device_map": "auto",
+      "hf_torch_dtype": "auto",
+      "hf_max_new_tokens": 256
+    },
+    "num_sampled_queries": 1,
+    "trace_metrics": {
+      "num_episodes": 1,
+      "success_rate": 0.0,
+      "avg_steps": 1.0,
+      "avg_groups": 1.0,
+      "avg_confidence": 0.0
+    },
+    "dataset": {
+      "train_path": "D:\\AINet\\LLM\\M-A-P\\RLM\\mcp-rlm\\artifacts\\online_rl_smoke\\iter_000\\verl_online_dataset\\train.jsonl",
+      "val_path": "D:\\AINet\\LLM\\M-A-P\\RLM\\mcp-rlm\\artifacts\\online_rl_smoke\\iter_000\\verl_online_dataset\\val.jsonl",
+      "num_rows": 1,
+      "num_train_rows": 1,
+      "num_val_rows": 1
+    },
+    "mcp_transport": {
+      "legacy_mcp": true,
+      "require_official_mcp_sdk": false
+    }
+  }
+]

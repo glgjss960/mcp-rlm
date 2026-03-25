@@ -34,6 +34,14 @@ class GroupContext:
         self._group = group
         self._step_index = 0
         self._local_state: Dict[str, Any] = {}
+        self._rolling_context_chars = 0
+
+        budget_chars = group.input_payload.get("context_budget_chars", 24000)
+        try:
+            parsed_budget = int(budget_chars)
+        except (TypeError, ValueError):
+            parsed_budget = 24000
+        self._context_budget_chars = max(2000, parsed_budget)
 
     @property
     def group_id(self) -> str:
@@ -55,12 +63,15 @@ class GroupContext:
     def local_state(self) -> Dict[str, Any]:
         return self._local_state
 
+    @staticmethod
+    def _json_size(value: Any) -> int:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+
     def context_usage(self) -> float:
-        payload_chars = len(json.dumps(self._group.input_payload, ensure_ascii=False, default=str))
-        local_chars = len(json.dumps(self._local_state, ensure_ascii=False, default=str))
-        total_chars = payload_chars + local_chars
-        budget_chars = 24000
-        return min(1.0, total_chars / float(budget_chars))
+        payload_chars = self._json_size(self._group.input_payload)
+        local_chars = self._json_size(self._local_state)
+        total_chars = payload_chars + local_chars + self._rolling_context_chars
+        return min(1.0, total_chars / float(self._context_budget_chars))
 
     async def read_memory(self, key: str) -> Any:
         async def op() -> Any:
@@ -109,6 +120,33 @@ class GroupContext:
                 "object_type": object_type.value,
                 "reason": reason.value,
                 "force": force,
+            },
+            op=op,
+        )
+
+    async def flush_context_pressure(self, *, note: str = "", force: bool = False) -> Any:
+        async def op() -> Any:
+            event = await self._runtime._commit_context_pressure_write(
+                group=self._group,
+                context_usage=self.context_usage(),
+                step_index=self._step_index,
+                trigger_action="manual_flush_context_pressure",
+                trigger_payload={"note": note},
+                local_state=self._local_state,
+                force=force,
+                note=note,
+            )
+            if event is not None:
+                self._rolling_context_chars = int(self._rolling_context_chars * 0.45)
+            return None if event is None else asdict(event)
+
+        return await self._record(
+            action_type=ActionType.WRITE_MEMORY,
+            action_name="flush_context_pressure",
+            payload={
+                "reason": WriteReason.CONTEXT_PRESSURE.value,
+                "force": force,
+                "note": note,
             },
             op=op,
         )
@@ -264,6 +302,11 @@ class GroupContext:
             raise
         finally:
             ended_at = utc_now_iso()
+            step_payload_chars = self._json_size(payload)
+            step_result_chars = self._json_size(result)
+            step_error_chars = len(error or "")
+            self._rolling_context_chars += step_payload_chars + step_result_chars + step_error_chars
+
             self._runtime._append_step(
                 StepRecord(
                     step_id=new_id("step"),
@@ -281,6 +324,26 @@ class GroupContext:
                 )
             )
 
+            is_pressure_write = (
+                action_type == ActionType.WRITE_MEMORY
+                and str(payload.get("reason", "")) == WriteReason.CONTEXT_PRESSURE.value
+            )
+            if not is_pressure_write:
+                try:
+                    pressure_event = await self._runtime._commit_context_pressure_write(
+                        group=self._group,
+                        context_usage=self.context_usage(),
+                        step_index=self._step_index,
+                        trigger_action=action_name,
+                        trigger_payload=payload,
+                        local_state=self._local_state,
+                    )
+                    if pressure_event is not None:
+                        self._rolling_context_chars = int(self._rolling_context_chars * 0.45)
+                except Exception:
+                    # Never let context-pressure telemetry break core execution.
+                    pass
+
 
 class MCPRLMRuntime:
     def __init__(
@@ -292,6 +355,9 @@ class MCPRLMRuntime:
         reward_model: Optional[HierarchicalRewardModel] = None,
         write_policy: Optional[WritePolicy] = None,
         max_group_concurrency: int = 64,
+        context_pressure_auto_write: bool = True,
+        context_pressure_min_step_gap: int = 2,
+        context_pressure_min_delta: float = 0.08,
     ) -> None:
         self.program_registry = program_registry
         self.mcp_client = mcp_client
@@ -299,6 +365,9 @@ class MCPRLMRuntime:
         self.reward_model = reward_model or HierarchicalRewardModel()
         self.write_policy = write_policy or WritePolicy()
         self.max_group_concurrency = max_group_concurrency
+        self.context_pressure_auto_write = bool(context_pressure_auto_write)
+        self.context_pressure_min_step_gap = max(1, int(context_pressure_min_step_gap))
+        self.context_pressure_min_delta = max(0.0, float(context_pressure_min_delta))
 
         self._group_semaphore = asyncio.Semaphore(max_group_concurrency)
         self._reset_episode_state()
@@ -324,7 +393,10 @@ class MCPRLMRuntime:
         self._group_step_count: Dict[str, int] = {}
         self._group_object_calls: Dict[str, int] = {}
         self._group_write_count: Dict[str, int] = {}
+        self._group_context_pressure_writes: Dict[str, int] = {}
         self._group_last_write_time: Dict[str, float] = {}
+        self._group_last_context_pressure_step: Dict[str, int] = {}
+        self._group_last_context_pressure_usage: Dict[str, float] = {}
 
     async def run_episode(
         self,
@@ -408,6 +480,9 @@ class MCPRLMRuntime:
         self._group_step_count[group_id] = 0
         self._group_object_calls[group_id] = 0
         self._group_write_count[group_id] = 0
+        self._group_context_pressure_writes[group_id] = 0
+        self._group_last_context_pressure_step[group_id] = -10_000
+        self._group_last_context_pressure_usage[group_id] = 0.0
         return group_id
 
     def _start_group(self, group_id: str) -> None:
@@ -477,8 +552,88 @@ class MCPRLMRuntime:
             last_write_time=last_write_time,
         )
         if event is not None:
-            self._group_write_count[intent.group_id] = self._group_write_count.get(intent.group_id, 0) + 1
+            if intent.reason == WriteReason.CONTEXT_PRESSURE:
+                self._group_context_pressure_writes[intent.group_id] = (
+                    self._group_context_pressure_writes.get(intent.group_id, 0) + 1
+                )
+            else:
+                self._group_write_count[intent.group_id] = self._group_write_count.get(intent.group_id, 0) + 1
             self._group_last_write_time[intent.group_id] = monotonic()
+        return event
+
+    @staticmethod
+    def _truncate_jsonable(value: Any, *, max_chars: int) -> Any:
+        rendered = json.dumps(value, ensure_ascii=False, default=str)
+        if len(rendered) <= max_chars:
+            return value
+        suffix = f"...(+{len(rendered) - max_chars} chars)"
+        return rendered[:max_chars] + suffix
+
+    @staticmethod
+    def _preview_local_state(local_state: Dict[str, Any], *, max_items: int, max_chars: int) -> Dict[str, Any]:
+        preview: Dict[str, Any] = {}
+        if not isinstance(local_state, dict):
+            return preview
+        for idx, (raw_key, raw_value) in enumerate(local_state.items()):
+            if idx >= max_items:
+                break
+            key = str(raw_key)
+            preview[key] = MCPRLMRuntime._truncate_jsonable(raw_value, max_chars=max_chars)
+        return preview
+
+    async def _commit_context_pressure_write(
+        self,
+        *,
+        group: GroupSpec,
+        context_usage: float,
+        step_index: int,
+        trigger_action: str,
+        trigger_payload: Optional[Dict[str, Any]] = None,
+        local_state: Optional[Dict[str, Any]] = None,
+        force: bool = False,
+        note: str = "",
+    ) -> Any:
+        threshold = float(self.write_policy.context_pressure_threshold)
+        if not force:
+            if not self.context_pressure_auto_write:
+                return None
+            if context_usage < threshold:
+                return None
+
+            group_id = group.group_id
+            last_step = self._group_last_context_pressure_step.get(group_id, -10_000)
+            last_usage = self._group_last_context_pressure_usage.get(group_id, 0.0)
+            if (step_index - last_step) < self.context_pressure_min_step_gap:
+                return None
+            if (context_usage - last_usage) < self.context_pressure_min_delta:
+                return None
+
+        key = f"metric/{group.group_id}/context_pressure"
+        content = {
+            "context_usage": round(float(context_usage), 4),
+            "threshold": round(threshold, 4),
+            "step_index": int(step_index),
+            "trigger_action": str(trigger_action),
+            "trigger_payload": self._truncate_jsonable(trigger_payload or {}, max_chars=900),
+            "local_state_preview": self._preview_local_state(local_state or {}, max_items=8, max_chars=220),
+            "note": str(note),
+        }
+
+        intent = WriteIntent(
+            episode_id=group.episode_id,
+            group_id=group.group_id,
+            key=key,
+            object_type=MemoryObjectType.METRIC,
+            reason=WriteReason.CONTEXT_PRESSURE,
+            content=content,
+            confidence=max(0.05, min(1.0, float(context_usage))),
+            context_usage=float(context_usage),
+            force=force,
+        )
+        event = await self._commit_write(intent)
+        if event is not None:
+            self._group_last_context_pressure_step[group.group_id] = int(step_index)
+            self._group_last_context_pressure_usage[group.group_id] = float(context_usage)
         return event
 
     async def _commit_internal_write(

@@ -1,0 +1,16 @@
+﻿[
+  {
+    "_id": "lb2_demo_001",
+    "domain": "single_doc_qa",
+    "sub_domain": "toy",
+    "difficulty": "easy",
+    "length": "short",
+    "question": "Which city is the capital of France?",
+    "choice_A": "Berlin",
+    "choice_B": "Madrid",
+    "choice_C": "Paris",
+    "choice_D": "Rome",
+    "answer": "C",
+    "context": "This document contains many notes. The capital of France is Paris. Another sentence mentions Rome and Madrid in other countries."
+  }
+]

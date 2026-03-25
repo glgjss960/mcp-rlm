@@ -2,9 +2,10 @@
 
 ## 1) Prepare input
 
-Create one UTF-8 text file containing the full long context.
+Create two UTF-8 files:
 
-Example: `data/long_context.txt`
+- long context file, example: `data/long_context.txt`
+- optional query file, example: `data/query.txt`
 
 ## 2) Preprocess into hierarchical store
 
@@ -21,6 +22,8 @@ Output: `artifacts/context_store/manifest.json` + segmented files.
 
 ## 3) Run multi-server MCP inference
 
+With inline query:
+
 ```bash
 python examples/run_mvp_inference.py \
   --manifest artifacts/context_store/manifest.json \
@@ -28,16 +31,98 @@ python examples/run_mvp_inference.py \
   --out artifacts/mvp
 ```
 
+With query file:
+
+```bash
+python examples/run_mvp_inference.py \
+  --manifest artifacts/context_store/manifest.json \
+  --query-file data/query.txt \
+  --out artifacts/mvp
+```
+
 This launches context + analysis MCP servers and runs recursive group inference.
 
-## 4) Read final answer
+## 4) Provider-specific startup and run
+
+### OpenRouter
+
+No local service required.
+
+```bash
+python examples/run_mvp_inference.py \
+  --manifest artifacts/context_store/manifest.json \
+  --query "Your question" \
+  --policy-mode openrouter \
+  --model openai/gpt-4o-mini \
+  --api-key <OPENROUTER_API_KEY>
+```
+
+### vLLM
+
+Start endpoint:
+
+```bash
+pip install vllm
+python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct --host 127.0.0.1 --port 8000
+```
+
+Run inference:
+
+```bash
+python examples/run_mvp_inference.py \
+  --manifest artifacts/context_store/manifest.json \
+  --query "Your question" \
+  --policy-mode vllm \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --api-base http://127.0.0.1:8000/v1
+```
+
+### Ollama
+
+Start service and pull model:
+
+```bash
+ollama serve
+ollama pull qwen2.5:7b
+```
+
+Run inference:
+
+```bash
+python examples/run_mvp_inference.py \
+  --manifest artifacts/context_store/manifest.json \
+  --query "Your question" \
+  --policy-mode ollama \
+  --model qwen2.5:7b \
+  --api-base http://127.0.0.1:11434/v1
+```
+
+### HuggingFace local
+
+Install dependencies:
+
+```bash
+pip install transformers torch accelerate
+```
+
+Run inference (no separate endpoint):
+
+```bash
+python examples/run_mvp_inference.py \
+  --manifest artifacts/context_store/manifest.json \
+  --query "Your question" \
+  --policy-mode huggingface \
+  --model Qwen/Qwen2.5-3B-Instruct
+```
+
+## 5) Read final answer
 
 Main answer is in:
 
 - `artifacts/mvp/episodes.jsonl` (`root_output`)
 - also printed in terminal
 
-## 5) Inspect trajectory and memory
+## 6) Inspect trajectory and memory
 
 - `artifacts/mvp/groups.jsonl`
 - `artifacts/mvp/steps.jsonl`
@@ -46,8 +131,16 @@ Main answer is in:
 
 These files contain full recursive trace and file-backed shared-memory events.
 
-## 6) One-command shortcut
+## 7) One-command shortcut
+
+With inline query:
 
 ```bash
 python examples/run_mvp_pipeline.py --input data/long_context.txt --query "Your question"
+```
+
+With query file:
+
+```bash
+python examples/run_mvp_pipeline.py --input data/long_context.txt --query-file data/query.txt
 ```

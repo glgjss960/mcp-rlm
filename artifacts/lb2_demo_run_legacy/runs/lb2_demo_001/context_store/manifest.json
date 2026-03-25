@@ -1,0 +1,23 @@
+{
+  "created_at": "2026-03-25T02:15:57.337741+00:00",
+  "source_file": "D:\\AINet\\LLM\\M-A-P\\RLM\\mcp-rlm\\artifacts\\lb2_demo_run_legacy\\runs\\lb2_demo_001\\context.txt",
+  "total_chars": 128,
+  "chunk_chars": 16000,
+  "overlap_chars": 400,
+  "branch_factor": 8,
+  "levels": {
+    "0": [
+      "L0_0000000"
+    ]
+  },
+  "segments": {
+    "L0_0000000": {
+      "level": 0,
+      "start_char": 0,
+      "end_char": 128,
+      "num_chars": 128,
+      "preview": "This document contains many notes. The capital of France is Paris. Another sentence mentions Rome and Madrid in other countries.",
+      "file": "segments\\level0\\L0_0000000.txt"
+    }
+  }
+}

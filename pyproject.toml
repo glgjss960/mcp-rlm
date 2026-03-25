@@ -8,8 +8,9 @@ version = "0.2.0"
 description = "MCP-RLM MVP with LLM policy, file memory, hierarchical long-context reading, and multi-server MCP orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["mcp>=1.0.0"]
 
 [tool.setuptools]
 package-dir = {"" = "."}
 packages = ["mcp_rlm", "mcp_rlm.training", "mcp_rlm.mvp"]
+
