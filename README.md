@@ -1,332 +1,174 @@
-﻿# MCP-RLM MVP
+# MCP-RLM Manual (Install -> Extend Object -> Benchmark -> RL -> Troubleshooting)
 
-MCP-RLM MVP implementation with:
+MCP-RLM is a recursive multi-agent runtime that combines:
 
-- LLM policy routing (`heuristic`, `openai`, `openrouter`, `vllm`, `ollama`, `huggingface`)
-- File-backed shared memory (append-only JSONL + CAS)
-- Hierarchical long-context preprocessing and retrieval
-- Multi-server MCP orchestration (`ctx` + `analysis` servers) via official MCP Python SDK
-- Recursive multi-group runtime with `spawn/join`
-- Default object-parallel fan-out in both root and leaf programs
+- hierarchical long-context preprocessing and retrieval,
+- file-backed shared memory,
+- multi-server MCP orchestration,
+- object-level parallel fan-out,
+- trajectory export for cold-start and on-policy RL.
 
-## Key modules
+This README is the operational manual for the latest code in this repository.
 
-- `mcp_rlm/runtime.py`: recursive group runtime and scheduler
-- `mcp_rlm/policy.py`: policy layer (OpenAI-compatible + optional local HuggingFace)
-- `mcp_rlm/file_memory.py`: file-based shared memory
-- `mcp_rlm/long_context.py`: preprocessing + hierarchical context store
-- `mcp_rlm/multi_mcp.py`: multi-server MCP client orchestration
-- `mcp_rlm/mvp_programs.py`: MVP recursive programs (root and leaf object-parallel fan-out)
-- `mcp_rlm/stdio_mcp_client.py`: stdio MCP client (official `mcp.ClientSession` transport)
-- `mcp_rlm/stdio_mcp_server.py`: stdio MCP server (official `mcp.server.Server`)
+## 0) Scope and Current Status
 
-## MCP servers and objects
+Implemented and ready:
 
-Servers:
+- MVP end-to-end inference (`run_mvp_pipeline.py`, `run_mvp_inference.py`)
+- LongBench-v2 runner (`run_longbench_v2_eval.py`)
+- MCP transport with official SDK (default) and legacy fallback
+- On-policy loop bridge to VERL (`run_online_ppo_with_verl.py`)
+- Custom + external MCP servers and extra fan-out config (`--mcp-server-config`)
 
-- `examples/run_context_server.py`
-- `examples/run_analysis_server.py`
+Not yet implemented as first-class benchmark runners:
 
-Objects:
+- BabiLong
+- RepoQA
 
-- `ctx/context_stats`
-- `ctx/list_level`
-- `ctx/read_segment`
-- `ctx/search_hierarchical`
-- `analysis/extract_facts`
-- `analysis/analyze_segment`
-- `analysis/merge_facts`
-- `analysis/sleep` (test/demo)
+You can still evaluate them by building dataset adapters (see Benchmark section).
 
-## Quick start (one command)
+## 1) Install
 
-```bash
-cd mcp-rlm
-python examples/run_mvp_pipeline.py --input data/long_context.txt --query "your question"
-```
+### 1.1 Prerequisites
 
-You can also pass query by file:
+Required:
 
-```bash
-python examples/run_mvp_pipeline.py --input data/long_context.txt --query-file data/query.txt
-```
+- Python 3.10+
+- pip
 
-## Two-step inference
+Recommended:
 
-1. Preprocess long text:
+- Git
+- virtual environment (`venv`)
 
-```bash
-python examples/preprocess_long_context.py --input data/long_context.txt --out artifacts/context_store
-```
+Optional, depending on what you run:
 
-2. Run inference:
+- vLLM (local OpenAI-compatible endpoint)
+- Ollama (local OpenAI-compatible endpoint)
+- `transformers` + `torch` + `accelerate` (local HuggingFace policy)
+- Node.js + `npx` (official MCP preset servers such as filesystem/sequential-thinking)
+- `uv` / `uvx` (official MCP preset servers such as fetch/git)
+- local VERL clone (`../verl`) for on-policy PPO
+
+### 1.2 Base install
+
+From repository root (`mcp-rlm/`):
 
 ```bash
-python examples/run_mvp_inference.py --manifest artifacts/context_store/manifest.json --query "your question" --out artifacts/mvp
+python -m venv .venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+# Linux/macOS
+# source .venv/bin/activate
+
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-Or with query file:
+The project dependency currently includes:
 
-```bash
-python examples/run_mvp_inference.py --manifest artifacts/context_store/manifest.json --query-file data/query.txt --out artifacts/mvp
-```
+- `mcp>=1.0.0` (official MCP Python SDK package)
 
-## Provider runbook (end-to-end)
+### 1.3 Optional provider installs
 
-Common flags for `run_mvp_inference.py` and `run_mvp_pipeline.py`:
-
-- `--policy-mode heuristic|openai|openrouter|vllm|ollama|huggingface`
-- `--model <model-name-or-path>`
-- `--api-base <openai-compatible-base-url>`
-- `--api-key <api-key>`
-
-### 1) OpenRouter
-
-No local service required.
-
-```bash
-python examples/run_mvp_pipeline.py \
-  --input data/long_context.txt \
-  --query "your question" \
-  --policy-mode openrouter \
-  --model openai/gpt-4o-mini \
-  --api-key <OPENROUTER_API_KEY>
-```
-
-Optional headers:
-
-- `--openrouter-site-url https://your.site`
-- `--openrouter-app-name mcp-rlm`
-
-### 2) vLLM (local OpenAI-compatible endpoint)
-
-1. Install and start endpoint:
-
-```bash
-pip install vllm
-python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct --host 127.0.0.1 --port 8000
-```
-
-2. Run MCP-RLM:
-
-```bash
-python examples/run_mvp_pipeline.py \
-  --input data/long_context.txt \
-  --query "your question" \
-  --policy-mode vllm \
-  --model Qwen/Qwen2.5-7B-Instruct \
-  --api-base http://127.0.0.1:8000/v1
-```
-
-### 3) Ollama (local OpenAI-compatible endpoint)
-
-1. Install and start Ollama service, then pull model:
-
-```bash
-ollama serve
-ollama pull qwen2.5:7b
-```
-
-2. Run MCP-RLM:
-
-```bash
-python examples/run_mvp_pipeline.py \
-  --input data/long_context.txt \
-  --query "your question" \
-  --policy-mode ollama \
-  --model qwen2.5:7b \
-  --api-base http://127.0.0.1:11434/v1
-```
-
-### 4) HuggingFace local model (direct `transformers`)
-
-1. Install dependencies:
+For local HuggingFace policy mode:
 
 ```bash
 pip install transformers torch accelerate
 ```
 
-2. Run MCP-RLM (no separate endpoint required):
+For local vLLM endpoint:
 
 ```bash
-python examples/run_mvp_pipeline.py \
-  --input data/long_context.txt \
-  --query "your question" \
-  --policy-mode huggingface \
-  --model Qwen/Qwen2.5-3B-Instruct
+pip install vllm
 ```
 
-Optional flags:
+### 1.4 Optional MCP SDK path override
 
-- `--hf-device-map auto`
-- `--hf-torch-dtype auto`
-- `--hf-max-new-tokens 256`
+If the `mcp` package is not importable from current env, MCP-RLM can also load SDK from a local checkout:
 
-## Outputs
-
-Inference outputs are written to `--out`:
-
-- `episodes.jsonl`
-- `groups.jsonl`
-- `steps.jsonl`
-- `memory_events.jsonl`
-- `cold_start_turns.jsonl`
-- `agentic_rl.jsonl`
-- `verl_warm_start.jsonl`
-- `openrlhf_episodes.jsonl`
-- `memory/events.jsonl` (file shared memory log)
-
-## Tests
+- clone path example: `../python-sdk/src`
+- set environment variable:
 
 ```bash
-python -m unittest discover -s tests -v
+# Windows PowerShell
+$env:MCP_PYTHON_SDK_PATH = "D:/AINet/LLM/M-A-P/RLM/python-sdk/src"
+
+# Linux/macOS
+# export MCP_PYTHON_SDK_PATH=/path/to/python-sdk/src
 ```
 
-
-
-
-## On-policy VERL RL loop (MCP-RLM rollout -> VERL PPO)
-
-This repo now includes an online RL loop script:
+### 1.5 Quick sanity checks
 
 ```bash
-python examples/run_online_ppo_with_verl.py \
-  --manifest artifacts/context_store/manifest.json \
-  --queries data/queries.jsonl \
-  --out artifacts/online_rl \
-  --iterations 2 \
-  --episodes-per-iter 8 \
-  --policy-mode huggingface \
-  --model Qwen/Qwen2.5-3B-Instruct \
-  --actor-model-path Qwen/Qwen2.5-3B-Instruct \
-  --verl-repo ../verl
+python examples/run_demo.py
+python -m unittest tests.test_context_pressure tests.test_runtime_parallel tests.test_verl_online -v
 ```
 
-`data/queries.jsonl` row format (minimal):
+## 2) Extend Object
 
-```json
-{"query": "your question", "answer": "optional ground truth"}
-```
+This section explains how to add new MCP objects and make programs call them.
 
-Per iteration outputs:
+### 2.1 Object naming and routing rule
 
-- rollout traces: `episodes/groups/steps/memory_events`
-- warm-start exports: `cold_start_turns.jsonl`, `agentic_rl.jsonl`, `verl_warm_start.jsonl`
-- VERL on-policy dataset: `iter_xxx/verl_online_dataset/train.jsonl` + `val.jsonl`
-- reward function for VERL: `mcp_rlm/training/verl_reward.py`
-- PPO checkpoints (if enabled): `iter_xxx/verl_checkpoints/global_step_*/actor`
+In multi-server mode, object names must be:
 
-Use `--skip-verl-train` to generate rollout + RL datasets only.
-Use `--sync-rollout-hf-from-ckpt` to update the next-iteration rollout model from latest VERL actor checkpoint.
-
-## Official MCP SDK strict mode
-
-All runner scripts support:
-
-- `--require-official-mcp-sdk`: require official MCP Python SDK transport, fail fast if unavailable
-- `--legacy-mcp`: force legacy JSON-RPC stdio mode
+- `<alias>/<tool_name>`
 
 Examples:
 
-```bash
-python examples/run_mvp_inference.py --manifest artifacts/context_store/manifest.json --query-file data/query.txt --require-official-mcp-sdk
-python examples/run_mvp_pipeline.py --input data/long_context.txt --query-file data/query.txt --legacy-mcp
+- `ctx/search_hierarchical`
+- `analysis/merge_facts`
+- `ofs/read_file` (external filesystem server alias)
+
+### 2.2 Add a new built-in analysis object
+
+File to edit:
+
+- `mcp_rlm/mcp.py`
+
+Pattern:
+
+```python
+def _my_object(payload: dict, ctx: MCPInvocationContext) -> dict:
+    text = str(payload.get("text", ""))
+    return {"length": len(text)}
+
+
+def register_builtin_objects(registry: MCPRegistry) -> None:
+    # existing registrations ...
+    registry.register("my_object", _my_object)
 ```
 
-## VERL reward-manager integration (verl==0.7.0)
+Then call it from programs as:
 
-This workspace now includes:
+- `analysis/my_object`
 
-- `verl/verl/workers/reward_manager/mcp_rlm.py`
-- registration in `verl/verl/workers/reward_manager/__init__.py`
+because `run_analysis_server.py` exposes `register_builtin_objects(...)`.
 
-Default online loop settings use:
+### 2.3 Add a new built-in context object
 
-- `--reward-manager-source register`
-- `--reward-manager-name mcp_rlm`
+File to edit:
 
-Alternative importlib manager path:
+- `examples/run_context_server.py`
 
-- `mcp_rlm/training/verl_reward_manager.py`
+Pattern:
 
+```python
+def my_context_tool(payload, _ctx):
+    # implement logic
+    return {"ok": True}
 
-
-## LongBench v2 integration
-
-This repo includes LongBench-v2-specific recursive programs:
-
-- `longbench_v2_root`
-- `longbench_v2_leaf_segment`
-
-LongBench-v2-related analysis objects:
-
-- `analysis/score_mcq_choices`
-- `analysis/aggregate_mcq_scores`
-- `analysis/normalize_mcq_answer`
-
-Run benchmark inference from local `data.json` or `data.jsonl`:
-
-```bash
-python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2 --policy-mode heuristic
+registry.register("my_context_tool", my_context_tool)
 ```
 
-With OpenRouter:
+Then call it from programs as:
 
-```bash
-python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2 --policy-mode openrouter --model openai/gpt-4o-mini --api-key <OPENROUTER_API_KEY>
-```
+- `ctx/my_context_tool`
 
-With local vLLM:
+### 2.4 Mount external MCP servers (official or custom)
 
-```bash
-python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2 --policy-mode vllm --model Qwen/Qwen2.5-7B-Instruct --api-base http://127.0.0.1:8000/v1
-```
-
-Useful controls:
-
-- `--start-index N`
-- `--limit N`
-- `--ids id1,id2,...`
-- `--resume`
-
-## High-Score LongBench v2 object pack (custom + official MCP)
-
-This repo now includes an expanded object set for LongBench-v2 score-oriented inference.
-
-Custom context objects (`ctx/*`):
-
-- `ctx/search_multi_query`
-- `ctx/search_hierarchical_mmr`
-- `ctx/read_segment_windows`
-
-Custom analysis objects (`analysis/*`):
-
-- `analysis/rerank_hits_with_choices`
-- `analysis/score_mcq_choices`
-- `analysis/score_mcq_windows`
-- `analysis/eliminate_choices`
-- `analysis/extract_code_cues`
-- `analysis/extract_table_cues`
-- `analysis/vote_choice_scores`
-- `analysis/aggregate_mcq_scores`
-- `analysis/normalize_mcq_answer`
-
-`longbench_v2_root` and `longbench_v2_leaf_segment` now fan-out these objects in parallel by default.
-
-### Official MCP servers integration
-
-You can mount official MCP servers (filesystem/memory/fetch/git/sequential-thinking) as extra aliases:
-
-```bash
-python examples/run_longbench_v2_eval.py \
-  --dataset-file ../LongBench/data.json \
-  --out artifacts/longbench_v2 \
-  --policy-mode heuristic \
-  --enable-official-mcp-presets \
-  --skip-unavailable-extra-servers
-```
-
-Or provide explicit server + extra fan-out config via JSON (`--mcp-server-config`):
+Use `--mcp-server-config` JSON. Example:
 
 ```json
 {
@@ -357,14 +199,278 @@ Or provide explicit server + extra fan-out config via JSON (`--mcp-server-config
 Run with config:
 
 ```bash
-python examples/run_longbench_v2_eval.py \
-  --dataset-file ../LongBench/data.json \
-  --out artifacts/longbench_v2 \
-  --policy-mode heuristic \
-  --mcp-server-config artifacts/mcp_servers.json
+python examples/run_mvp_pipeline.py   --input data/long_context.txt   --query-file data/query.txt   --mcp-server-config artifacts/mcp_servers.json
 ```
 
-The same extra-server options are available in:
+### 2.5 Make recursive programs use the new objects
 
-- `examples/run_mvp_inference.py`
-- `examples/run_mvp_pipeline.py`
+Main program files:
+
+- `mcp_rlm/mvp_programs.py`
+- `mcp_rlm/longbench_v2_programs.py`
+
+Use:
+
+- `await ctx.call_object(...)` for one object
+- `await ctx.call_objects([...])` for object-parallel fan-out
+
+Tip: when adding heavy fan-out, keep payload compact and use `ctx.flush_context_pressure(...)` if you intentionally checkpoint memory under high context pressure.
+
+## 3) Benchmark
+
+### 3.1 MVP task inference (single long-context task)
+
+One-command pipeline:
+
+```bash
+python examples/run_mvp_pipeline.py --input data/long_context.txt --query "your question"
+```
+
+Or query from file:
+
+```bash
+python examples/run_mvp_pipeline.py --input data/long_context.txt --query-file data/query.txt
+```
+
+Two-step mode:
+
+```bash
+python examples/preprocess_long_context.py --input data/long_context.txt --out artifacts/context_store
+python examples/run_mvp_inference.py --manifest artifacts/context_store/manifest.json --query-file data/query.txt --out artifacts/mvp
+```
+
+### 3.2 Provider runbook
+
+OpenRouter:
+
+```bash
+python examples/run_mvp_pipeline.py   --input data/long_context.txt   --query "your question"   --policy-mode openrouter   --model openai/gpt-4o-mini   --api-key <OPENROUTER_API_KEY>
+```
+
+vLLM:
+
+```bash
+python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct --host 127.0.0.1 --port 8000
+python examples/run_mvp_pipeline.py   --input data/long_context.txt   --query "your question"   --policy-mode vllm   --model Qwen/Qwen2.5-7B-Instruct   --api-base http://127.0.0.1:8000/v1
+```
+
+Ollama:
+
+```bash
+ollama serve
+ollama pull qwen2.5:7b
+python examples/run_mvp_pipeline.py   --input data/long_context.txt   --query "your question"   --policy-mode ollama   --model qwen2.5:7b   --api-base http://127.0.0.1:11434/v1
+```
+
+HuggingFace local:
+
+```bash
+python examples/run_mvp_pipeline.py   --input data/long_context.txt   --query "your question"   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct
+```
+
+### 3.3 LongBench-v2 (supported)
+
+Run:
+
+```bash
+python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2   --policy-mode heuristic
+```
+
+With OpenRouter:
+
+```bash
+python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2   --policy-mode openrouter   --model openai/gpt-4o-mini   --api-key <OPENROUTER_API_KEY>
+```
+
+With vLLM:
+
+```bash
+python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2   --policy-mode vllm   --model Qwen/Qwen2.5-7B-Instruct   --api-base http://127.0.0.1:8000/v1
+```
+
+Useful controls:
+
+- `--start-index N`
+- `--limit N`
+- `--ids id1,id2,...`
+- `--resume`
+
+### 3.4 BabiLong and RepoQA (adapter workflow, no built-in runner yet)
+
+Current status:
+
+- no dedicated `run_babilong_eval.py`
+- no dedicated `run_repoqa_eval.py`
+
+Recommended adapter path:
+
+1. Convert benchmark samples into your own JSONL task file.
+2. For QA-style tasks, run `run_mvp_inference.py` / `run_mvp_pipeline.py` per sample.
+3. Save prediction + ground truth and score externally.
+4. If needed, add a dedicated runner following `examples/run_longbench_v2_eval.py` structure.
+
+## 4) RL (On-policy with VERL)
+
+Reference doc:
+
+- `docs/VERL_ONPOLICY.md`
+
+### 4.1 Prepare inputs
+
+- manifest: `artifacts/context_store/manifest.json`
+- query file (`.jsonl` recommended):
+
+```json
+{"query": "question 1", "answer": "optional expected answer"}
+{"query": "question 2"}
+```
+
+### 4.2 Rollout + dataset export only (no PPO)
+
+```bash
+python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl   --iterations 1   --episodes-per-iter 8   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct   --skip-verl-train
+```
+
+### 4.3 Full on-policy loop with VERL PPO
+
+Assume VERL repo exists at `../verl`.
+
+```bash
+python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl   --iterations 2   --episodes-per-iter 8   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct   --actor-model-path Qwen/Qwen2.5-3B-Instruct   --verl-repo ../verl   --reward-manager-source register   --reward-manager-name mcp_rlm
+```
+
+Importlib reward manager fallback:
+
+```bash
+python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --actor-model-path Qwen/Qwen2.5-3B-Instruct   --verl-repo ../verl   --reward-manager-source importlib   --reward-manager-name MCPRLMRewardManager   --reward-manager-module-path mcp_rlm/training/verl_reward_manager.py
+```
+
+### 4.4 RL outputs
+
+Each iteration directory (`iter_000`, `iter_001`, ...) contains:
+
+- trajectory exports: `episodes.jsonl`, `groups.jsonl`, `steps.jsonl`, `memory_events.jsonl`
+- warm-start exports: `cold_start_turns.jsonl`, `agentic_rl.jsonl`, `verl_warm_start.jsonl`, `openrlhf_episodes.jsonl`
+- VERL dataset: `verl_online_dataset/train.jsonl`, `verl_online_dataset/val.jsonl`
+- checkpoints if PPO enabled: `verl_checkpoints/global_step_*/actor`
+- `summary.json`
+
+Global summary:
+
+- `artifacts/online_rl/summary.json`
+
+## 5) Troubleshooting
+
+### 5.1 Official MCP SDK import error
+
+Symptom:
+
+- `Official MCP SDK is required but unavailable`
+- `Unable to import MCP SDK`
+
+Fix:
+
+- install in current env: `pip install mcp`
+- or set `MCP_PYTHON_SDK_PATH=/path/to/python-sdk/src`
+- if needed, run with `--legacy-mcp` as fallback
+
+### 5.2 Unknown MCP alias or object
+
+Symptom:
+
+- `Unknown MCP server alias: ...`
+- `MCP object not found: ...`
+
+Fix:
+
+- verify object name format `<alias>/<tool_name>`
+- verify server alias in `--mcp-server-config`
+- verify registration in server code (`registry.register(...)`)
+
+### 5.3 Connection refused to local model endpoint
+
+Symptom:
+
+- failures when `--policy-mode vllm` or `--policy-mode ollama`
+
+Fix:
+
+- start endpoint/service first
+- verify `--api-base`
+- verify model name
+
+### 5.4 npx / uvx missing for official MCP presets
+
+Symptom:
+
+- extra server startup failure with preset mode
+
+Fix:
+
+- install Node.js (for `npx`) and/or `uv` (for `uvx`)
+- use `--skip-unavailable-extra-servers` to skip unavailable presets
+
+### 5.5 Windows permission denied on temp/artifact paths
+
+Symptom:
+
+- `PermissionError: [WinError 5] Access is denied`
+
+Fix:
+
+- ensure output and temp directories are writable
+- avoid running in restricted temp locations
+- set writable temp folder in PowerShell session:
+
+```powershell
+$env:TEMP = "D:\tmp"
+$env:TMP = "D:\tmp"
+```
+
+### 5.6 Query input errors
+
+Symptom:
+
+- `Provide either --query or --query-file`
+- `Query file is empty`
+
+Fix:
+
+- pass exactly one of `--query` / `--query-file`
+- ensure UTF-8 text file with non-empty content
+
+### 5.7 VERL training fails to start
+
+Checklist:
+
+- `--verl-repo` points to valid VERL clone
+- `--actor-model-path` provided (unless `--skip-verl-train`)
+- `PYTHONPATH` can import both `verl` and `mcp_rlm`
+- GPU / CUDA / torch stack is available for selected rollout engine
+
+## 6) Useful Commands Summary
+
+MVP one-command:
+
+```bash
+python examples/run_mvp_pipeline.py --input data/long_context.txt --query-file data/query.txt
+```
+
+LongBench-v2:
+
+```bash
+python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2 --policy-mode heuristic
+```
+
+On-policy RL (dataset only):
+
+```bash
+python examples/run_online_ppo_with_verl.py --manifest artifacts/context_store/manifest.json --queries data/queries.jsonl --skip-verl-train
+```
+
+Run tests:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
