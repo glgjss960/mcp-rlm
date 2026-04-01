@@ -24,6 +24,7 @@ from mcp_rlm import (
     register_longbench_v2_programs,
     register_mvp_programs,
 )
+from mcp_rlm.types import Budget
 
 
 POLICY_MODES = ["heuristic", "openai", "openrouter", "vllm", "ollama", "huggingface"]
@@ -62,6 +63,7 @@ def build_runtime(
     require_official_mcp_sdk: bool = False,
     legacy_mcp: bool = False,
     extra_specs: List[MCPServerSpec] | None = None,
+    group_max_wall_seconds: float = 120.0,
 ) -> tuple[MCPRLMRuntime, MultiServerMCPClient]:
     ctx_server = ROOT / "examples" / "run_context_server.py"
     analysis_server = ROOT / "examples" / "run_analysis_server.py"
@@ -109,6 +111,7 @@ def build_runtime(
         mcp_client=multi_client,
         memory=FileSharedMemory(memory_dir),
         max_group_concurrency=64,
+        default_group_budget=Budget(max_wall_seconds=max(10.0, float(group_max_wall_seconds))),
     )
     return runtime, multi_client
 
@@ -171,6 +174,7 @@ async def run_one(
     overlap_chars: int,
     branch_factor: int,
     max_children: int,
+    group_max_wall_seconds: float,
     policy_config: Dict[str, Any],
     require_official_mcp_sdk: bool,
     legacy_mcp: bool,
@@ -214,6 +218,7 @@ async def run_one(
         require_official_mcp_sdk=require_official_mcp_sdk,
         legacy_mcp=legacy_mcp,
         extra_specs=extra_specs,
+        group_max_wall_seconds=group_max_wall_seconds,
     )
 
     try:
@@ -274,6 +279,43 @@ async def run_one(
     return row
 
 
+def build_error_row(item: Dict[str, Any], *, error: BaseException, stage: str) -> Dict[str, Any]:
+    item_id = str(item.get("_id", "unknown"))
+    question = str(item.get("question", "")).strip()
+    choices = {
+        "A": str(item.get("choice_A", "")).strip(),
+        "B": str(item.get("choice_B", "")).strip(),
+        "C": str(item.get("choice_C", "")).strip(),
+        "D": str(item.get("choice_D", "")).strip(),
+    }
+    answer = str(item.get("answer", "")).strip().upper()
+    context = str(item.get("context", ""))
+
+    return {
+        "_id": item_id,
+        "domain": item.get("domain"),
+        "sub_domain": item.get("sub_domain"),
+        "difficulty": item.get("difficulty"),
+        "length": item.get("length"),
+        "question": question,
+        "choice_A": choices["A"],
+        "choice_B": choices["B"],
+        "choice_C": choices["C"],
+        "choice_D": choices["D"],
+        "answer": answer,
+        "response": "",
+        "pred": None,
+        "judge": False,
+        "context": context[:1000],
+        "mcp_rlm": {
+            "success": False,
+            "error_type": type(error).__name__,
+            "error": str(error),
+            "stage": stage,
+        },
+    }
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Run LongBench v2 with MCP-RLM")
     parser.add_argument("--dataset-file", type=str, required=True, help="Path to LongBench v2 data.json or data.jsonl")
@@ -289,6 +331,7 @@ async def main() -> None:
     parser.add_argument("--overlap-chars", type=int, default=400)
     parser.add_argument("--branch-factor", type=int, default=8)
     parser.add_argument("--max-children", type=int, default=16)
+    parser.add_argument("--group-max-wall-seconds", type=float, default=480.0, help="Per-group wall-clock budget in seconds")
 
     parser.add_argument("--policy-mode", type=str, default="heuristic", choices=POLICY_MODES)
     parser.add_argument("--model", type=str, default="", help="Model id/name for openai-compatible or huggingface mode")
@@ -357,27 +400,38 @@ async def main() -> None:
             if args.resume and item_id in done_ids:
                 continue
 
-            row = await run_one(
-                item,
-                out_dir=out_dir,
-                chunk_chars=args.chunk_chars,
-                overlap_chars=args.overlap_chars,
-                branch_factor=args.branch_factor,
-                max_children=args.max_children,
-                policy_config=policy_config,
-                require_official_mcp_sdk=bool(args.require_official_mcp_sdk),
-                legacy_mcp=bool(args.legacy_mcp),
-                extra_specs=extra_specs,
-                root_extra_object_fanout=root_extra_object_fanout,
-                leaf_extra_object_fanout=leaf_extra_object_fanout,
-            )
+            try:
+                row = await run_one(
+                    item,
+                    out_dir=out_dir,
+                    chunk_chars=args.chunk_chars,
+                    overlap_chars=args.overlap_chars,
+                    branch_factor=args.branch_factor,
+                    max_children=args.max_children,
+                    group_max_wall_seconds=args.group_max_wall_seconds,
+                    policy_config=policy_config,
+                    require_official_mcp_sdk=bool(args.require_official_mcp_sdk),
+                    legacy_mcp=bool(args.legacy_mcp),
+                    extra_specs=extra_specs,
+                    root_extra_object_fanout=root_extra_object_fanout,
+                    leaf_extra_object_fanout=leaf_extra_object_fanout,
+                )
+            except asyncio.CancelledError as exc:
+                row = build_error_row(item, error=exc, stage="run_one_cancelled")
+            except Exception as exc:
+                row = build_error_row(item, error=exc, stage="run_one_exception")
+
             fout.write(json.dumps(row, ensure_ascii=False) + "\n")
             fout.flush()
 
             total += 1
             correct += int(bool(row.get("judge")))
             running = 0.0 if total <= 0 else (100.0 * correct / total)
-            print(f"[{idx}/{len(selected)}] _id={item_id} pred={row.get('pred')} gold={row.get('answer')} judge={row.get('judge')} acc={running:.2f}%")
+            if row.get("pred") is None and isinstance(row.get("mcp_rlm"), dict) and row["mcp_rlm"].get("error"):
+                etype = row["mcp_rlm"].get("error_type")
+                print(f"[{idx}/{len(selected)}] _id={item_id} ERROR={etype} acc={running:.2f}%")
+            else:
+                print(f"[{idx}/{len(selected)}] _id={item_id} pred={row.get('pred')} gold={row.get('answer')} judge={row.get('judge')} acc={running:.2f}%")
 
     print("Result file:", result_file)
     print("Extra MCP servers:", [spec.alias for spec in extra_specs])

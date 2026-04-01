@@ -77,6 +77,13 @@ class MCPClient:
                 output=output,
                 latency_ms=int((perf_counter() - start) * 1000),
             )
+        except asyncio.CancelledError as exc:
+            return MCPResult(
+                object_name=call.object_name,
+                ok=False,
+                error=f"CancelledError: {exc}",
+                latency_ms=int((perf_counter() - start) * 1000),
+            )
         except Exception as exc:
             return MCPResult(
                 object_name=call.object_name,
@@ -86,7 +93,15 @@ class MCPClient:
             )
 
     async def call_many(self, calls: List[MCPCall], ctx: MCPInvocationContext) -> List[MCPResult]:
-        tasks = [asyncio.create_task(self.call(call, ctx)) for call in calls]
+        async def one(call: MCPCall) -> MCPResult:
+            try:
+                return await self.call(call, ctx)
+            except asyncio.CancelledError as exc:
+                return MCPResult(object_name=call.object_name, ok=False, error=f"CancelledError: {exc}")
+            except Exception as exc:
+                return MCPResult(object_name=call.object_name, ok=False, error=str(exc))
+
+        tasks = [asyncio.create_task(one(call)) for call in calls]
         return await asyncio.gather(*tasks)
 
 

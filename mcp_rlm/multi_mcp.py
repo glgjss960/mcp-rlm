@@ -72,7 +72,15 @@ class MultiServerMCPClient:
         return await self._clients[alias].call(routed, ctx)
 
     async def call_many(self, calls: List[MCPCall], ctx: MCPInvocationContext) -> List[MCPResult]:
-        tasks = [asyncio.create_task(self.call(call, ctx)) for call in calls]
+        async def one(call: MCPCall) -> MCPResult:
+            try:
+                return await self.call(call, ctx)
+            except asyncio.CancelledError as exc:
+                return MCPResult(object_name=call.object_name, ok=False, error=f"CancelledError: {exc}")
+            except Exception as exc:
+                return MCPResult(object_name=call.object_name, ok=False, error=str(exc))
+
+        tasks = [asyncio.create_task(one(call)) for call in calls]
         return await asyncio.gather(*tasks)
 
     def _route(self, object_name: str) -> tuple[str, str]:

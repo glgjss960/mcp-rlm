@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from time import monotonic
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 import asyncio
@@ -239,7 +239,25 @@ class GroupContext:
     async def join_groups(self, group_ids: List[str]) -> List[GroupResult]:
         async def op() -> List[GroupResult]:
             tasks = [self._runtime.group_tasks[group_id] for group_id in group_ids]
-            results = await asyncio.gather(*tasks)
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+            results: List[GroupResult] = []
+            for group_id, raw in zip(group_ids, raw_results):
+                if isinstance(raw, GroupResult):
+                    results.append(raw)
+                    continue
+                if isinstance(raw, BaseException):
+                    results.append(self._runtime._mark_group_failed(group_id, raw))
+                    continue
+                results.append(
+                    GroupResult(
+                        group_id=group_id,
+                        status=GroupStatus.FAILED,
+                        output=None,
+                        reward=0.0,
+                        child_group_ids=list(self._runtime.children.get(group_id, [])),
+                        error=f"Invalid group result type: {type(raw).__name__}",
+                    )
+                )
             await self._runtime._commit_internal_write(
                 group=self._group,
                 key=f"artifact/{self.group_id}/join",
@@ -297,6 +315,9 @@ class GroupContext:
             result = await op()
             ok = True
             return result
+        except asyncio.CancelledError as exc:
+            error = self._runtime._format_exception(exc)
+            raise
         except Exception as exc:
             error = str(exc)
             raise
@@ -358,6 +379,7 @@ class MCPRLMRuntime:
         context_pressure_auto_write: bool = True,
         context_pressure_min_step_gap: int = 2,
         context_pressure_min_delta: float = 0.08,
+        default_group_budget: Optional[Budget] = None,
     ) -> None:
         self.program_registry = program_registry
         self.mcp_client = mcp_client
@@ -368,6 +390,7 @@ class MCPRLMRuntime:
         self.context_pressure_auto_write = bool(context_pressure_auto_write)
         self.context_pressure_min_step_gap = max(1, int(context_pressure_min_step_gap))
         self.context_pressure_min_delta = max(0.0, float(context_pressure_min_delta))
+        self._default_group_budget = replace(default_group_budget) if default_group_budget is not None else Budget()
 
         self._group_semaphore = asyncio.Semaphore(max_group_concurrency)
         self._reset_episode_state()
@@ -421,13 +444,22 @@ class MCPRLMRuntime:
         )
         self._start_group(root_group_id)
 
-        root_result = await self._group_tasks[root_group_id]
+        try:
+            root_result = await self._group_tasks[root_group_id]
+        except asyncio.CancelledError as exc:
+            root_result = self._mark_group_failed(root_group_id, exc)
 
         while True:
             pending = [task for task in self._group_tasks.values() if not task.done()]
             if not pending:
                 break
-            await asyncio.gather(*pending)
+            settled = await asyncio.gather(*pending, return_exceptions=True)
+            task_to_group = {task: gid for gid, task in self._group_tasks.items()}
+            for task, item in zip(pending, settled):
+                if isinstance(item, BaseException):
+                    group_id = task_to_group.get(task)
+                    if group_id:
+                        self._mark_group_failed(group_id, item)
 
         self._compute_total_rewards(root_group_id)
         ended_at = utc_now_iso()
@@ -465,6 +497,15 @@ class MCPRLMRuntime:
             depth = self._groups[parent_group_id].depth + 1
             self._children.setdefault(parent_group_id, []).append(group_id)
 
+        resolved_budget: Budget
+        if budget is None:
+            if parent_group_id is not None and parent_group_id in self._groups:
+                resolved_budget = replace(self._groups[parent_group_id].budget)
+            else:
+                resolved_budget = replace(self._default_group_budget)
+        else:
+            resolved_budget = replace(budget)
+
         group = GroupSpec(
             group_id=group_id,
             episode_id=episode_id,
@@ -472,7 +513,7 @@ class MCPRLMRuntime:
             program=program,
             parent_group_id=parent_group_id,
             depth=depth,
-            budget=budget or Budget(),
+            budget=resolved_budget,
             input_payload=input_payload,
         )
         self._groups[group_id] = group
@@ -503,6 +544,9 @@ class MCPRLMRuntime:
                 )
                 group.result = output
                 group.status = GroupStatus.SUCCEEDED
+            except asyncio.CancelledError as exc:
+                group.error = self._format_exception(exc)
+                group.status = GroupStatus.FAILED
             except Exception as exc:
                 group.error = str(exc)
                 group.status = GroupStatus.FAILED
@@ -525,6 +569,34 @@ class MCPRLMRuntime:
                 child_group_ids=list(self._children.get(group.group_id, [])),
                 error=group.error,
             )
+
+    @staticmethod
+    def _format_exception(exc: BaseException) -> str:
+        prefix = type(exc).__name__
+        message = str(exc).strip()
+        if not message:
+            return prefix
+        return f"{prefix}: {message}"
+
+    def _mark_group_failed(self, group_id: str, exc: BaseException) -> GroupResult:
+        group = self._groups.get(group_id)
+        error = self._format_exception(exc)
+        if group is not None:
+            group.error = error
+            group.status = GroupStatus.FAILED
+            if group.ended_at is None:
+                group.ended_at = utc_now_iso()
+            reward = group.immediate_reward
+        else:
+            reward = 0.0
+        return GroupResult(
+            group_id=group_id,
+            status=GroupStatus.FAILED,
+            output=None if group is None else group.result,
+            reward=reward,
+            child_group_ids=list(self._children.get(group_id, [])),
+            error=error,
+        )
 
     def _compute_total_rewards(self, group_id: str) -> float:
         child_ids = self._children.get(group_id, [])
