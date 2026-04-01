@@ -20,6 +20,16 @@ def _candidate_sdk_paths() -> Iterable[Path]:
 def mcp_sdk_status() -> tuple[bool, str]:
     """Return MCP SDK availability and a human-readable detail string."""
 
+    # Allow explicit override to take precedence over an already-installed pip package.
+    preferred_env = os.getenv('MCP_PYTHON_SDK_PATH', '').strip()
+    if preferred_env:
+        preferred = Path(preferred_env)
+        if preferred.exists():
+            preferred_str = str(preferred)
+            if preferred_str in sys.path:
+                sys.path.remove(preferred_str)
+            sys.path.insert(0, preferred_str)
+
     try:
         importlib.import_module('mcp')
         return True, 'Imported MCP SDK from current sys.path'
@@ -50,3 +60,4 @@ def ensure_mcp_sdk() -> None:
         'Install mcp dependencies or set MCP_PYTHON_SDK_PATH to <python-sdk>/src. '
         f'Detail: {detail}'
     )
+

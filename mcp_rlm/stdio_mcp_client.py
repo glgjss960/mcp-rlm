@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Sequence
 import asyncio
@@ -65,6 +66,7 @@ class StdioMCPClient:
                 reason = f'{reason}; import_error={type(_SDK_IMPORT_ERROR).__name__}: {_SDK_IMPORT_ERROR}'
             raise RuntimeError(f'Official MCP SDK is required but unavailable. {reason}')
 
+        self._strict_official_sdk = bool(strict_official_sdk)
         self._start_lock = asyncio.Lock()
 
         # SDK-mode state
@@ -87,9 +89,16 @@ class StdioMCPClient:
 
     async def start(self) -> None:
         if self._use_sdk:
-            await self._start_sdk()
-        else:
-            await self._start_legacy()
+            try:
+                await self._start_sdk()
+                return
+            except Exception:
+                if self._strict_official_sdk:
+                    raise
+                # SDK startup can fail when server and client support mismatched protocol versions.
+                # Fall back to legacy JSON-RPC transport to keep eval/inference running.
+                self._use_sdk = False
+        await self._start_legacy()
 
     async def close(self) -> None:
         if self._use_sdk:
@@ -170,21 +179,31 @@ class StdioMCPClient:
             await self.start()
             session = self._require_session()
 
+            payload = dict(call.payload or {})
+            inline_ctx = payload.get('_mcp_rlm_context')
+            if not isinstance(inline_ctx, dict):
+                payload['_mcp_rlm_context'] = {
+                    'episode_id': ctx.episode_id,
+                    'group_id': ctx.group_id,
+                }
+
+            timeout_delta = timedelta(seconds=max(0.001, float(call.timeout_seconds)))
+
             async with self._semaphore:
                 result = await session.call_tool(
                     name=call.object_name,
-                    arguments=call.payload,
-                    read_timeout_seconds=call.timeout_seconds,
+                    arguments=payload,
+                    read_timeout_seconds=timeout_delta,
                     meta={
                         'episode_id': ctx.episode_id,
                         'group_id': ctx.group_id,
                     },
                 )
 
-            if result.is_error:
+            if self._tool_result_is_error(result):
                 raise RuntimeError(self._extract_error(result))
 
-            output = result.structured_content
+            output = self._tool_result_structured_content(result)
             if output is None:
                 output = self._extract_output_from_content(result.content)
 
@@ -401,13 +420,27 @@ class StdioMCPClient:
 
     @staticmethod
     def _extract_error(result: Any) -> str:
-        structured = getattr(result, 'structured_content', None)
+        structured = StdioMCPClient._tool_result_structured_content(result)
         if isinstance(structured, dict) and structured.get('error'):
             return str(structured.get('error'))
         extracted = StdioMCPClient._extract_output_from_content(getattr(result, 'content', None))
         if extracted is None:
             return 'MCP tool error'
         return str(extracted)
+
+    @staticmethod
+    def _tool_result_is_error(result: Any) -> bool:
+        raw = getattr(result, 'isError', None)
+        if raw is None:
+            raw = getattr(result, 'is_error', None)
+        return bool(raw)
+
+    @staticmethod
+    def _tool_result_structured_content(result: Any) -> Any:
+        raw = getattr(result, 'structuredContent', None)
+        if raw is None:
+            raw = getattr(result, 'structured_content', None)
+        return raw
 
     @staticmethod
     def _extract_output_from_content(content: Any) -> Any:
@@ -430,3 +463,4 @@ class StdioMCPClient:
             except json.JSONDecodeError:
                 return text
         return None
+

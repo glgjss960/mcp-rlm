@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -16,14 +16,13 @@ _SDK_IMPORT_ERROR: Optional[Exception] = None
 try:
     ensure_mcp_sdk()
     from mcp import types
-    from mcp.server import Server, ServerRequestContext
+    from mcp.server import Server
     from mcp.server.stdio import stdio_server
 
     _SDK_AVAILABLE = True
 except Exception as exc:  # pragma: no cover - environment dependent
     types = Any  # type: ignore[assignment,misc]
     Server = Any  # type: ignore[assignment,misc]
-    ServerRequestContext = Any  # type: ignore[assignment,misc]
     stdio_server = None  # type: ignore[assignment]
     _SDK_IMPORT_ERROR = exc
 
@@ -67,13 +66,35 @@ class StdioMCPServer:
             self._server = Server(
                 self._server_info.name,
                 version=self._server_info.version,
-                on_list_tools=self._handle_list_tools,
-                on_call_tool=self._handle_call_tool,
             )
+            self._register_sdk_handlers()
 
     @property
     def using_official_sdk(self) -> bool:
         return self._use_sdk
+
+    def _register_sdk_handlers(self) -> None:
+        assert self._server is not None
+
+        @self._server.list_tools()
+        async def _list_tools(_: Any = None) -> list[Any]:
+            tools: list[Any] = []
+            for name in self._registry.list_objects():
+                tools.append(
+                    types.Tool(
+                        name=name,
+                        description=f"Tool '{name}' exposed by MCP-RLM server",
+                        inputSchema={
+                            'type': 'object',
+                            'additionalProperties': True,
+                        },
+                    )
+                )
+            return tools
+
+        @self._server.call_tool(validate_input=False)
+        async def _call_tool(name: str, arguments: Dict[str, Any] | None) -> Any:
+            return await self._handle_call_tool_sdk(name, arguments)
 
     async def serve_forever(self) -> None:
         if self._use_sdk:
@@ -160,7 +181,7 @@ class StdioMCPServer:
                     {
                         'name': name,
                         'description': f"Tool '{name}' exposed by MCP-RLM server",
-                        'inputSchema': {'type': 'object'},
+                        'inputSchema': {'type': 'object', 'additionalProperties': True},
                     }
                     for name in self._registry.list_objects()
                 ]
@@ -199,51 +220,63 @@ class StdioMCPServer:
 
         raise RuntimeError(f'Unsupported MCP method: {method}')
 
-    async def _handle_list_tools(
-        self,
-        _: ServerRequestContext,
-        __: types.PaginatedRequestParams | None,
-    ) -> types.ListToolsResult:
-        tools = []
-        for name in self._registry.list_objects():
-            tools.append(
-                types.Tool(
-                    name=name,
-                    description=f"Tool '{name}' exposed by MCP-RLM server",
-                    input_schema={
-                        'type': 'object',
-                        'additionalProperties': True,
-                    },
-                )
-            )
-        return types.ListToolsResult(tools=tools)
+    def _current_sdk_meta(self) -> Dict[str, Any]:
+        if self._server is None:
+            return {}
 
-    async def _handle_call_tool(
+        try:
+            request_context = self._server.request_context
+        except Exception:
+            return {}
+
+        raw_meta = getattr(request_context, 'meta', None)
+        if raw_meta is None:
+            return {}
+        if isinstance(raw_meta, dict):
+            return dict(raw_meta)
+
+        dumped = getattr(raw_meta, 'model_dump', None)
+        if callable(dumped):
+            try:
+                maybe_dict = dumped(exclude_none=True)
+                if isinstance(maybe_dict, dict):
+                    return dict(maybe_dict)
+            except Exception:
+                pass
+
+        try:
+            return dict(raw_meta)
+        except Exception:
+            return {}
+
+    async def _handle_call_tool_sdk(
         self,
-        ctx: ServerRequestContext,
-        params: types.CallToolRequestParams,
-    ) -> types.CallToolResult:
-        name = str(params.name or '').strip()
-        if not name:
+        name: str,
+        arguments: Dict[str, Any] | None,
+    ) -> Any:
+        tool_name = str(name or '').strip()
+        if not tool_name:
             return self._error_result('tools/call requires non-empty tool name')
 
-        arguments: Dict[str, Any] = dict(params.arguments or {})
-        if not isinstance(arguments, dict):
-            arguments = {}
+        payload: Dict[str, Any]
+        if isinstance(arguments, dict):
+            payload = dict(arguments)
+        else:
+            payload = {}
 
-        meta = dict(ctx.meta or {})
-        inline_ctx = arguments.pop('_mcp_rlm_context', None)
+        inline_ctx = payload.pop('_mcp_rlm_context', None)
         if not isinstance(inline_ctx, dict):
             inline_ctx = {}
 
+        meta = self._current_sdk_meta()
         invocation_ctx = MCPInvocationContext(
             episode_id=str(meta.get('episode_id') or inline_ctx.get('episode_id') or ''),
             group_id=str(meta.get('group_id') or inline_ctx.get('group_id') or ''),
         )
 
         try:
-            handler = self._registry.get(name)
-            raw = handler(arguments, invocation_ctx)
+            handler = self._registry.get(tool_name)
+            raw = handler(payload, invocation_ctx)
             if inspect.isawaitable(raw):
                 output = await raw
             else:
@@ -253,8 +286,8 @@ class StdioMCPServer:
             structured_content = self._jsonable(output) if isinstance(output, dict) else None
             return types.CallToolResult(
                 content=[types.TextContent(type='text', text=rendered)],
-                structured_content=structured_content,
-                is_error=False,
+                structuredContent=structured_content,
+                isError=False,
             )
         except Exception as exc:
             return self._error_result(str(exc))
@@ -270,11 +303,11 @@ class StdioMCPServer:
         return str(value)
 
     @staticmethod
-    def _error_result(message: str) -> types.CallToolResult:
+    def _error_result(message: str) -> Any:
         return types.CallToolResult(
             content=[types.TextContent(type='text', text=message)],
-            structured_content={'error': message},
-            is_error=True,
+            structuredContent={'error': message},
+            isError=True,
         )
 
     @staticmethod
