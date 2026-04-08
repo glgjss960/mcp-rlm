@@ -3,6 +3,7 @@
 from .file_memory import FileSharedMemory
 from .long_context import LongContextStore, preprocess_long_context
 from .longbench_v2_programs import register_longbench_v2_programs
+from .llm_manager_programs import register_llm_manager_programs
 from .mcp import (
     MCPCall,
     MCPClient,
@@ -59,5 +60,6 @@ __all__ = [
     "register_builtin_objects",
     "register_builtin_programs",
     "register_longbench_v2_programs",
+    "register_llm_manager_programs",
     "register_mvp_programs",
 ]

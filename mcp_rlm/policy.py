@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -270,18 +270,16 @@ class TransformersLocalPolicy(BasePolicy):
 
     async def _chat_json(self, *, system: str, user: str) -> Dict[str, Any]:
         await self._ensure_loaded()
-
-        prompt = (
-            "System:\n"
-            + system
-            + "\n\nUser:\n"
-            + user
-            + "\n\nReturn ONLY valid JSON object.\nAssistant:\n"
-        )
+        messages = [
+            {"role": "system", "content": system + " Return ONLY valid JSON object."},
+            {"role": "user", "content": user},
+        ]
 
         def _infer() -> Dict[str, Any]:
             if self._pipeline is None:
                 raise RuntimeError("Transformers pipeline is not initialized")
+
+            prompt = self._chat_prompt_from_messages(messages)
             try:
                 outputs = self._pipeline(
                     prompt,
@@ -300,15 +298,67 @@ class TransformersLocalPolicy(BasePolicy):
             if not outputs:
                 raise RuntimeError("Empty generation output")
             first = outputs[0]
-            text = str(first.get("generated_text", "")) if isinstance(first, dict) else str(first)
-            if not text and isinstance(first, dict):
-                text = str(first.get("text", ""))
-            if text.startswith(prompt):
-                text = text[len(prompt) :]
+            text = self._extract_generation_text(first, prompt=prompt)
             return _extract_json_object(text)
 
         return await asyncio.to_thread(_infer)
 
+    def _chat_prompt_from_messages(self, messages: List[Dict[str, str]]) -> str:
+        if self._pipeline is None:
+            raise RuntimeError("Transformers pipeline is not initialized")
+        tokenizer = getattr(self._pipeline, "tokenizer", None)
+        if tokenizer is not None:
+            apply_template = getattr(tokenizer, "apply_chat_template", None)
+            if callable(apply_template):
+                try:
+                    rendered = apply_template(messages, tokenize=False, add_generation_prompt=True)
+                    if isinstance(rendered, str) and rendered.strip():
+                        return rendered
+                except TypeError:
+                    try:
+                        rendered = apply_template(messages, tokenize=False)
+                        if isinstance(rendered, str) and rendered.strip():
+                            return rendered
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+        return (
+            "System:\n"
+            + str(messages[0].get("content", ""))
+            + "\n\nUser:\n"
+            + str(messages[1].get("content", ""))
+            + "\n\nAssistant:\n"
+        )
+
+    @staticmethod
+    def _extract_generation_text(first: Any, *, prompt: str) -> str:
+        if isinstance(first, dict):
+            generated = first.get("generated_text", "")
+            if isinstance(generated, str):
+                text = generated
+            elif isinstance(generated, list):
+                candidate = ""
+                for item in generated:
+                    if not isinstance(item, dict):
+                        continue
+                    role = str(item.get("role", "")).strip().lower()
+                    content = str(item.get("content", ""))
+                    if role == "assistant" and content.strip():
+                        candidate = content
+                text = candidate or str(generated)
+            else:
+                text = str(generated)
+
+            if not text and first.get("text") is not None:
+                text = str(first.get("text", ""))
+        else:
+            text = str(first)
+
+        if text.startswith(prompt):
+            return text[len(prompt) :]
+        return text
     async def _ensure_loaded(self) -> None:
         if self._pipeline is not None:
             return

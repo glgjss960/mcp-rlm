@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
@@ -172,6 +172,40 @@ def _tokenize(text: str) -> List[str]:
     return [t for t in re.findall(r"[a-zA-Z0-9_]+", str(text).lower()) if len(t) > 1]
 
 
+
+def _semantic_embed(text: str, *, dim: int = 256) -> List[float]:
+    if dim <= 0:
+        dim = 256
+    vec = [0.0 for _ in range(dim)]
+    terms = _tokenize(text)
+    if not terms:
+        return vec
+
+    for term in terms:
+        idx = hash(term) % dim
+        vec[idx] += 1.0
+
+    low = str(text).lower()
+    for i in range(max(0, len(low) - 2)):
+        tri = low[i : i + 3]
+        if " " in tri:
+            continue
+        idx = hash(f"tri:{tri}") % dim
+        vec[idx] += 0.2
+
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm > 0:
+        vec = [v / norm for v in vec]
+    return vec
+
+
+def _semantic_cosine(a: List[float], b: List[float]) -> float:
+    if not a or not b:
+        return 0.0
+    size = min(len(a), len(b))
+    if size <= 0:
+        return 0.0
+    return float(sum(a[i] * b[i] for i in range(size)))
 def _extract_facts(payload: Dict[str, Any], _: MCPInvocationContext) -> Dict[str, Any]:
     query = str(payload.get("query", "")).strip().lower()
     docs = [str(x) for x in payload.get("documents", [])]
@@ -551,6 +585,170 @@ def _rerank_hits_with_choices(payload: Dict[str, Any], _: MCPInvocationContext) 
     }
 
 
+
+def _semantic_score_mcq_choices(payload: Dict[str, Any], _: MCPInvocationContext) -> Dict[str, Any]:
+    question = str(payload.get("question") or payload.get("query") or "").strip()
+    choices = _parse_mcq_choices(payload)
+    max_evidence = max(1, int(payload.get("max_evidence", 4)))
+    segment_id = str(payload.get("segment_id", "")).strip()
+
+    text = str(payload.get("text") or payload.get("context") or "")
+    if not text.strip():
+        windows = payload.get("windows", [])
+        if isinstance(windows, list):
+            chunks: List[str] = []
+            for item in windows:
+                if not isinstance(item, dict):
+                    continue
+                chunk = str(item.get("text", ""))
+                if chunk.strip():
+                    chunks.append(chunk)
+                if len(chunks) >= 8:
+                    break
+            text = "\n\n".join(chunks)
+
+    if not question or not choices or not text.strip():
+        return {
+            "segment_id": segment_id,
+            "choice_scores": {k: 0.0 for k in _MCQ_LETTERS},
+            "evidence": [],
+            "best_choice": None,
+            "confidence": 0.0,
+        }
+
+    sentences = _split_sentences(text)
+    q_vec = _semantic_embed(question)
+    choice_vecs = {
+        letter: _semantic_embed(f"{question}\nChoice ({letter}): {choice}")
+        for letter, choice in choices.items()
+    }
+
+    per_choice: Dict[str, List[Dict[str, Any]]] = {k: [] for k in _MCQ_LETTERS}
+
+    for sentence in sentences:
+        s = sentence.strip()
+        if not s:
+            continue
+        s_vec = _semantic_embed(s)
+        q_sim = _semantic_cosine(s_vec, q_vec)
+
+        sims: Dict[str, float] = {}
+        for letter in _MCQ_LETTERS:
+            c_vec = choice_vecs.get(letter)
+            if c_vec is None:
+                sims[letter] = 0.0
+                continue
+            sims[letter] = _semantic_cosine(s_vec, c_vec)
+
+        for letter in _MCQ_LETTERS:
+            sim = sims.get(letter, 0.0)
+            other_best = max([v for k, v in sims.items() if k != letter], default=0.0)
+            margin = sim - other_best
+            score = max(0.0, (0.75 * sim) + (0.25 * q_sim) + (0.35 * margin))
+            if score < 0.03:
+                continue
+            per_choice[letter].append(
+                {
+                    "choice": letter,
+                    "text": s,
+                    "score": round(float(score), 5),
+                    "semantic_similarity": round(float(sim), 5),
+                    "question_similarity": round(float(q_sim), 5),
+                    "margin": round(float(margin), 5),
+                    "segment_id": segment_id,
+                    "kind": "semantic",
+                }
+            )
+
+    choice_scores: Dict[str, float] = {k: 0.0 for k in _MCQ_LETTERS}
+    evidence: List[Dict[str, Any]] = []
+    for letter, items in per_choice.items():
+        items.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        top = items[:max_evidence]
+        choice_scores[letter] = round(sum(float(x.get("score", 0.0)) for x in top), 5)
+        evidence.extend(top)
+
+    ranking = sorted(choice_scores.items(), key=lambda kv: kv[1], reverse=True)
+    best_choice = ranking[0][0] if ranking and ranking[0][1] > 0 else None
+    total = sum(max(0.0, s) for _, s in ranking)
+    confidence = 0.0 if total <= 0 else max(0.0, min(1.0, ranking[0][1] / total))
+
+    evidence.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+    return {
+        "segment_id": segment_id,
+        "choice_scores": {k: round(float(v), 5) for k, v in choice_scores.items()},
+        "ranking": [{"choice": c, "score": round(float(s), 5)} for c, s in ranking],
+        "best_choice": best_choice,
+        "confidence": round(confidence, 4),
+        "evidence": evidence[: max_evidence * max(1, len(choices))],
+    }
+
+
+def _semantic_eliminate_choices(payload: Dict[str, Any], _: MCPInvocationContext) -> Dict[str, Any]:
+    base = _semantic_score_mcq_choices(payload, _)
+    scores = _normalize_choice_scores(base)
+
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    best_val = ranked[0][1] if ranked else 0.0
+    gap_margin = float(payload.get("gap_margin", 0.12))
+    eliminate_threshold = float(payload.get("eliminate_threshold", 0.18))
+
+    penalties: Dict[str, float] = {k: 0.0 for k in _MCQ_LETTERS}
+    supports: Dict[str, float] = {k: float(scores[k]) for k in _MCQ_LETTERS}
+
+    for letter in _MCQ_LETTERS:
+        val = float(scores.get(letter, 0.0))
+        gap = max(0.0, (best_val - val) - gap_margin)
+        penalties[letter] = round(gap, 5)
+
+    eliminated = [k for k in _MCQ_LETTERS if penalties[k] >= eliminate_threshold]
+    return {
+        "choice_penalties": penalties,
+        "supports": {k: round(float(v), 5) for k, v in supports.items()},
+        "eliminated": eliminated,
+        "best_choice": ranked[0][0] if ranked and ranked[0][1] > 0 else None,
+    }
+
+
+def _semantic_rerank_hits_with_choices(payload: Dict[str, Any], _: MCPInvocationContext) -> Dict[str, Any]:
+    query = str(payload.get("query", "")).strip()
+    choices = _parse_mcq_choices(payload)
+    hits = payload.get("hits", [])
+    top_k = max(1, int(payload.get("top_k", 16)))
+
+    if not isinstance(hits, list):
+        hits = []
+
+    joint_query = query
+    for letter, text in sorted(choices.items()):
+        joint_query += f"\n({letter}) {text}"
+
+    query_vec = _semantic_embed(joint_query)
+
+    max_base = max([_safe_float(item.get("score", 0.0), 0.0) for item in hits if isinstance(item, dict)], default=1.0)
+    if max_base <= 0:
+        max_base = 1.0
+
+    ranked: List[Dict[str, Any]] = []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        preview = str(hit.get("preview", ""))
+        base = _safe_float(hit.get("score", 0.0), 0.0) / max_base
+        sem = _semantic_cosine(query_vec, _semantic_embed(preview))
+        rerank = (0.38 * base) + (0.62 * sem)
+        item = dict(hit)
+        item["semantic_rerank_score"] = round(float(rerank), 5)
+        item["semantic_similarity"] = round(float(sem), 5)
+        ranked.append(item)
+
+    ranked.sort(key=lambda x: _safe_float(x.get("semantic_rerank_score", 0.0), 0.0), reverse=True)
+    return {
+        "query": query,
+        "top_k": top_k,
+        "hits": ranked[:top_k],
+        "total_candidates": len(ranked),
+    }
 def _vote_choice_scores(payload: Dict[str, Any], _: MCPInvocationContext) -> Dict[str, Any]:
     maps = payload.get("maps", [])
     weights = payload.get("weights", [])
@@ -679,5 +877,10 @@ def register_builtin_objects(registry: MCPRegistry) -> None:
     registry.register("rerank_hits_with_choices", _rerank_hits_with_choices)
     registry.register("aggregate_mcq_scores", _aggregate_mcq_scores)
     registry.register("normalize_mcq_answer", _normalize_mcq_answer)
+
+    # Semantic-strengthened LongBench objects
+    registry.register("semantic_score_mcq_choices", _semantic_score_mcq_choices)
+    registry.register("semantic_eliminate_choices", _semantic_eliminate_choices)
+    registry.register("semantic_rerank_hits_with_choices", _semantic_rerank_hits_with_choices)
 
     registry.register("sleep", _sleep_tool)

@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Sequence
 import asyncio
 import contextlib
 import json
+import os
+from pathlib import Path
 
 from .mcp import MCPCall, MCPInvocationContext, MCPResult
 from .mcp_sdk import ensure_mcp_sdk, mcp_sdk_status
@@ -83,6 +85,43 @@ class StdioMCPClient:
         self._stderr_buffer: List[str] = []
         self._started = False
 
+    @staticmethod
+    def _is_writable_dir(path: str) -> bool:
+        target = str(path or '').strip()
+        if not target:
+            return False
+        try:
+            directory = Path(target)
+            directory.mkdir(parents=True, exist_ok=True)
+            probe = directory / '.mcp_rlm_write_probe'
+            probe.write_text('ok', encoding='utf-8')
+            probe.unlink(missing_ok=True)
+            return True
+        except Exception:
+            return False
+
+    def _prepare_subprocess_env(self) -> Dict[str, str]:
+        env: Dict[str, str] = dict(os.environ)
+        if self._env:
+            env.update({str(k): str(v) for k, v in self._env.items()})
+
+        configured_tmp = [
+            str(env.get('TMP', '')).strip(),
+            str(env.get('TEMP', '')).strip(),
+            str(env.get('TMPDIR', '')).strip(),
+        ]
+        if any(self._is_writable_dir(path) for path in configured_tmp if path):
+            return env
+
+        fallback_root = Path(self._cwd or os.getcwd())
+        fallback_tmp = fallback_root / 'artifacts' / 'tmp' / 'mcp_stdio'
+        if self._is_writable_dir(str(fallback_tmp)):
+            fallback = str(fallback_tmp)
+            env['TMP'] = fallback
+            env['TEMP'] = fallback
+            env['TMPDIR'] = fallback
+        return env
+
     @property
     def using_official_sdk(self) -> bool:
         return self._use_sdk
@@ -127,7 +166,15 @@ class StdioMCPClient:
     async def call(self, call: MCPCall, ctx: MCPInvocationContext) -> MCPResult:
         try:
             if self._use_sdk:
-                return await self._call_sdk(call, ctx)
+                sdk_result = await self._call_sdk(call, ctx)
+                if (
+                    not sdk_result.ok
+                    and not self._strict_official_sdk
+                    and self._should_retry_with_legacy(str(sdk_result.error or ""))
+                ):
+                    await self._downgrade_sdk_to_legacy()
+                    return await self._call_legacy(call, ctx)
+                return sdk_result
             return await self._call_legacy(call, ctx)
         except asyncio.CancelledError as exc:
             return MCPResult(object_name=call.object_name, ok=False, error=f"CancelledError: {exc}")
@@ -146,6 +193,31 @@ class StdioMCPClient:
         tasks = [asyncio.create_task(one(call)) for call in calls]
         return await asyncio.gather(*tasks)
 
+
+    async def _downgrade_sdk_to_legacy(self) -> None:
+        if not self._use_sdk:
+            return
+        await self._close_sdk()
+        self._use_sdk = False
+
+    @staticmethod
+    def _should_retry_with_legacy(error: str) -> bool:
+        msg = str(error or "").strip().lower()
+        if not msg:
+            return False
+        needles = [
+            "access is denied",
+            "winerror 5",
+            "permission denied",
+            "broken pipe",
+            "stream closed",
+            "connection reset",
+            "connection aborted",
+            "session is closed",
+            "transport",
+        ]
+        return any(token in msg for token in needles)
+
     async def _start_sdk(self) -> None:
         async with self._start_lock:
             if self._session is not None:
@@ -155,11 +227,12 @@ class StdioMCPClient:
             try:
                 command = self._command[0]
                 args = self._command[1:]
+                server_env = self._prepare_subprocess_env()
                 server_params = StdioServerParameters(
                     command=command,
                     args=args,
                     cwd=self._cwd,
-                    env=self._env,
+                    env=server_env,
                 )
                 read_stream, write_stream = await stack.enter_async_context(stdio_client(server_params))
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
@@ -246,10 +319,11 @@ class StdioMCPClient:
             if self._started:
                 return
 
+            server_env = self._prepare_subprocess_env()
             self._process = await asyncio.create_subprocess_exec(
                 *self._command,
                 cwd=self._cwd,
-                env=self._env,
+                env=server_env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

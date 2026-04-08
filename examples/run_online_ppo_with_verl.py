@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List
@@ -21,6 +21,8 @@ from mcp_rlm import (
     MultiServerMCPClient,
     ProgramRegistry,
     register_builtin_programs,
+    register_longbench_v2_programs,
+    register_llm_manager_programs,
     register_mvp_programs,
 )
 from mcp_rlm.training import (
@@ -70,6 +72,8 @@ def build_runtime(
     *,
     require_official_mcp_sdk: bool = False,
     legacy_mcp: bool = False,
+    enable_longbench: bool = False,
+    enable_llm_manager: bool = False,
 ) -> tuple[MCPRLMRuntime, MultiServerMCPClient]:
     ctx_server = ROOT / 'examples' / 'run_context_server.py'
     analysis_server = ROOT / 'examples' / 'run_analysis_server.py'
@@ -107,6 +111,10 @@ def build_runtime(
     registry = ProgramRegistry()
     register_builtin_programs(registry)
     register_mvp_programs(registry)
+    if enable_longbench:
+        register_longbench_v2_programs(registry)
+    if enable_llm_manager:
+        register_llm_manager_programs(registry)
 
     runtime = MCPRLMRuntime(
         program_registry=registry,
@@ -129,35 +137,96 @@ async def run_rollouts(
     samples: List[QueryItem],
     manifest_path: Path,
     out_dir: Path,
+    program: str,
     max_children: int,
     policy_config: Dict[str, Any],
+    prompt_style: str,
+    longbench_prompt_dir: str,
+    manager_max_turns: int,
+    manager_max_history: int,
+    default_child_program: str,
+    manager_system_prompt: str,
+    manager_finalize_system_prompt: str,
     require_official_mcp_sdk: bool,
     legacy_mcp: bool,
 ) -> List[Any]:
+    program_name = str(program).strip() or 'mvp_root'
+    enable_longbench = program_name in {'longbench_v2_root'}
+    enable_llm_manager = program_name in {'llm_managed_root', 'llm_managed_child'}
+
     runtime, mcp_client = build_runtime(
         manifest_path,
         out_dir / 'memory',
         require_official_mcp_sdk=require_official_mcp_sdk,
         legacy_mcp=legacy_mcp,
+        enable_longbench=enable_longbench,
+        enable_llm_manager=enable_llm_manager,
     )
     traces: List[Any] = []
 
     try:
         for sample in samples:
+            metadata = sample.metadata if isinstance(sample.metadata, dict) else {}
+            question = str(metadata.get('question') or sample.query).strip()
+            choices = metadata.get('choices') if isinstance(metadata.get('choices'), dict) else {
+                'A': str(metadata.get('choice_A', '')).strip(),
+                'B': str(metadata.get('choice_B', '')).strip(),
+                'C': str(metadata.get('choice_C', '')).strip(),
+                'D': str(metadata.get('choice_D', '')).strip(),
+            }
+            choices = {str(k).strip().upper(): str(v).strip() for k, v in choices.items() if str(v).strip()}
+
             payload: Dict[str, Any] = {
-                'query': sample.query,
                 'manifest_path': str(manifest_path),
-                'max_children': max_children,
                 'policy_config': dict(policy_config),
+                'rollout_program': program_name,
+                'prompt_style': prompt_style,
             }
             if sample.answer:
                 payload['expected_answer'] = sample.answer
-            if sample.metadata:
-                payload['query_metadata'] = sample.metadata
+            if metadata:
+                payload['query_metadata'] = metadata
+
+            if program_name == 'mvp_root':
+                payload.update(
+                    {
+                        'query': sample.query,
+                        'max_children': max_children,
+                    }
+                )
+            elif program_name == 'longbench_v2_root':
+                payload.update(
+                    {
+                        'question': question,
+                        'choices': choices,
+                        'max_children': max_children,
+                        'prompt_style': prompt_style,
+                        'longbench_prompt_dir': longbench_prompt_dir,
+                    }
+                )
+            elif program_name == 'llm_managed_root':
+                payload.update(
+                    {
+                        'query': question,
+                        'question': question,
+                        'choices': choices,
+                        'manager_max_turns': max(1, int(manager_max_turns)),
+                        'manager_max_history': max(1, int(manager_max_history)),
+                        'default_child_program': default_child_program,
+                        'prompt_style': prompt_style,
+                        'longbench_prompt_dir': longbench_prompt_dir,
+                    }
+                )
+                if manager_system_prompt.strip():
+                    payload['manager_system_prompt'] = manager_system_prompt
+                if manager_finalize_system_prompt.strip():
+                    payload['manager_finalize_system_prompt'] = manager_finalize_system_prompt
+            else:
+                payload.update({'query': sample.query, 'max_children': max_children})
 
             trace = await runtime.run_episode(
-                goal=sample.query,
-                program='mvp_root',
+                goal=question if program_name in {'longbench_v2_root', 'llm_managed_root'} else sample.query,
+                program=program_name,
                 input_payload=payload,
             )
 
@@ -165,8 +234,12 @@ async def run_rollouts(
                 if sample.answer and trace.root_output.get('expected_answer') is None:
                     trace.root_output['expected_answer'] = sample.answer
                 if sample.answer:
-                    answer_text = str(trace.root_output.get('answer', '')).lower()
-                    trace.root_output['answer_correct'] = sample.answer.lower() in answer_text
+                    pred = str(trace.root_output.get('pred', '')).strip().upper()
+                    if pred in {'A', 'B', 'C', 'D'} and len(str(sample.answer).strip()) == 1:
+                        trace.root_output['answer_correct'] = pred == str(sample.answer).strip().upper()
+                    else:
+                        answer_text = str(trace.root_output.get('answer', '')).lower()
+                        trace.root_output['answer_correct'] = str(sample.answer).lower() in answer_text
 
             traces.append(trace)
     finally:
@@ -343,6 +416,14 @@ async def main() -> None:
     parser.add_argument('--iterations', type=int, default=1)
     parser.add_argument('--episodes-per-iter', type=int, default=8)
     parser.add_argument('--max-children', type=int, default=16)
+    parser.add_argument('--program', type=str, default='mvp_root', choices=['mvp_root', 'longbench_v2_root', 'llm_managed_root'])
+    parser.add_argument('--prompt-style', type=str, default='hybrid', choices=['internal', '0shot', '0shot_cot', 'hybrid'])
+    parser.add_argument('--longbench-prompt-dir', type=str, default='')
+    parser.add_argument('--manager-max-turns', type=int, default=56)
+    parser.add_argument('--manager-max-history', type=int, default=10)
+    parser.add_argument('--default-child-program', type=str, default='llm_managed_child')
+    parser.add_argument('--manager-system-prompt-file', type=str, default='')
+    parser.add_argument('--manager-finalize-system-prompt-file', type=str, default='')
     parser.add_argument('--val-ratio', type=float, default=0.1)
     parser.add_argument('--seed', type=int, default=7)
 
@@ -400,6 +481,13 @@ async def main() -> None:
     policy_config = build_policy_config(args)
     actor_model_path = args.actor_model_path
 
+    manager_system_prompt = ''
+    manager_finalize_system_prompt = ''
+    if args.manager_system_prompt_file:
+        manager_system_prompt = Path(args.manager_system_prompt_file).resolve().read_text(encoding='utf-8')
+    if args.manager_finalize_system_prompt_file:
+        manager_finalize_system_prompt = Path(args.manager_finalize_system_prompt_file).resolve().read_text(encoding='utf-8')
+
     if not args.skip_verl_train and not actor_model_path:
         raise ValueError('--actor-model-path is required unless --skip-verl-train is set')
 
@@ -424,8 +512,16 @@ async def main() -> None:
             samples=sampled,
             manifest_path=manifest_path,
             out_dir=iter_dir,
+            program=str(args.program),
             max_children=int(args.max_children),
             policy_config=policy_config,
+            prompt_style=str(args.prompt_style),
+            longbench_prompt_dir=str(args.longbench_prompt_dir),
+            manager_max_turns=int(args.manager_max_turns),
+            manager_max_history=int(args.manager_max_history),
+            default_child_program=str(args.default_child_program),
+            manager_system_prompt=manager_system_prompt,
+            manager_finalize_system_prompt=manager_finalize_system_prompt,
             require_official_mcp_sdk=bool(args.require_official_mcp_sdk),
             legacy_mcp=bool(args.legacy_mcp),
         )

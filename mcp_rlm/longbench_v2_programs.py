@@ -4,6 +4,7 @@ from typing import Any, Dict, List, TYPE_CHECKING
 import asyncio
 import re
 
+from .longbench_prompting import load_prompt_set, render_longbench_prompt
 from .mcp import MCPCall
 from .policy import build_policy_from_config
 from .types import GroupStatus, MemoryObjectType, WriteReason
@@ -167,6 +168,65 @@ def _merge_hits(weighted_sources: List[tuple[str, float, List[Dict[str, Any]]]],
     return merged
 
 
+def _merge_reranked_hits(*, merged_hits: List[Dict[str, Any]], lexical_rerank: List[Dict[str, Any]], semantic_rerank: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
+    by_seg: Dict[str, Dict[str, Any]] = {}
+
+    def ensure(seg_id: str, seed: Dict[str, Any]) -> Dict[str, Any]:
+        item = by_seg.get(seg_id)
+        if item is None:
+            item = dict(seed)
+            item["final_rank_score"] = float(seed.get("score", 0.0))
+            by_seg[seg_id] = item
+        return item
+
+    for hit in merged_hits:
+        if not isinstance(hit, dict):
+            continue
+        seg_id = str(hit.get("segment_id", "")).strip()
+        if not seg_id:
+            continue
+        ensure(seg_id, hit)
+
+    for hit in lexical_rerank:
+        if not isinstance(hit, dict):
+            continue
+        seg_id = str(hit.get("segment_id", "")).strip()
+        if not seg_id:
+            continue
+        item = ensure(seg_id, hit)
+        item["lexical_rerank_score"] = float(hit.get("rerank_score", 0.0))
+
+    for hit in semantic_rerank:
+        if not isinstance(hit, dict):
+            continue
+        seg_id = str(hit.get("segment_id", "")).strip()
+        if not seg_id:
+            continue
+        item = ensure(seg_id, hit)
+        item["semantic_rerank_score"] = float(hit.get("semantic_rerank_score", 0.0))
+
+    max_base = max([float(item.get("score", 0.0)) for item in by_seg.values()], default=1.0)
+    max_lex = max([float(item.get("lexical_rerank_score", 0.0)) for item in by_seg.values()], default=1.0)
+    max_sem = max([float(item.get("semantic_rerank_score", 0.0)) for item in by_seg.values()], default=1.0)
+    if max_base <= 0:
+        max_base = 1.0
+    if max_lex <= 0:
+        max_lex = 1.0
+    if max_sem <= 0:
+        max_sem = 1.0
+
+    for item in by_seg.values():
+        base = float(item.get("score", 0.0)) / max_base
+        lex = float(item.get("lexical_rerank_score", 0.0)) / max_lex
+        sem = float(item.get("semantic_rerank_score", 0.0)) / max_sem
+        final_score = (0.30 * base) + (0.30 * lex) + (0.40 * sem)
+        item["final_rank_score"] = round(float(final_score), 6)
+
+    out = list(by_seg.values())
+    out.sort(key=lambda x: float(x.get("final_rank_score", 0.0)), reverse=True)
+    return out[:top_k]
+
+
 def _build_extra_calls(specs: Any) -> List[MCPCall]:
     calls: List[MCPCall] = []
     if not isinstance(specs, list):
@@ -221,11 +281,16 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
     policy = build_policy_from_config(policy_config if isinstance(policy_config, dict) else None)
 
     segment_resp = await ctx.call_object(
-        "ctx/read_segment",
+        "ctx/read_segment_adaptive",
         {
             "manifest_path": manifest_path,
             "segment_id": segment_id,
+            "question": question,
+            "choices": choices,
             "max_chars": read_max_chars,
+            "window_chars": min(3600, max(1000, read_max_chars // 3)),
+            "stride_chars": min(2000, max(400, read_max_chars // 6)),
+            "max_windows": 8,
         },
     )
     segment_meta = segment_resp.get("segment", {}) if isinstance(segment_resp, dict) else {}
@@ -285,12 +350,33 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
             },
         ),
         MCPCall(
+            object_name="analysis/semantic_score_mcq_choices",
+            payload={
+                "question": question,
+                "choices": choices,
+                "text": segment_text,
+                "windows": windows,
+                "segment_id": segment_id,
+                "max_evidence": 4,
+            },
+        ),
+        MCPCall(
             object_name="analysis/eliminate_choices",
             payload={
                 "question": question,
                 "choices": choices,
                 "text": segment_text,
                 "eliminate_threshold": 2.2,
+            },
+        ),
+        MCPCall(
+            object_name="analysis/semantic_eliminate_choices",
+            payload={
+                "question": question,
+                "choices": choices,
+                "text": segment_text,
+                "eliminate_threshold": 0.20,
+                "gap_margin": 0.10,
             },
         ),
         MCPCall(
@@ -318,9 +404,11 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
     analyze = primary_results[0] if len(primary_results) > 0 and isinstance(primary_results[0], dict) else {}
     full_score = primary_results[1] if len(primary_results) > 1 and isinstance(primary_results[1], dict) else {}
     window_score = primary_results[2] if len(primary_results) > 2 and isinstance(primary_results[2], dict) else {}
-    elimination = primary_results[3] if len(primary_results) > 3 and isinstance(primary_results[3], dict) else {}
-    code_cues = primary_results[4] if len(primary_results) > 4 and isinstance(primary_results[4], dict) else {}
-    table_cues = primary_results[5] if len(primary_results) > 5 and isinstance(primary_results[5], dict) else {}
+    semantic_score = primary_results[3] if len(primary_results) > 3 and isinstance(primary_results[3], dict) else {}
+    elimination = primary_results[4] if len(primary_results) > 4 and isinstance(primary_results[4], dict) else {}
+    semantic_elim = primary_results[5] if len(primary_results) > 5 and isinstance(primary_results[5], dict) else {}
+    code_cues = primary_results[6] if len(primary_results) > 6 and isinstance(primary_results[6], dict) else {}
+    table_cues = primary_results[7] if len(primary_results) > 7 and isinstance(primary_results[7], dict) else {}
 
     extra_results = await _best_effort_call_objects(ctx, extra_calls) if extra_calls else []
     extra_score_maps: List[Dict[str, Any]] = []
@@ -336,13 +424,22 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
                 if isinstance(ev, dict):
                     extra_evidence.append(ev)
 
+    combined_penalties = {k: 0.0 for k in _MCQ_LETTERS}
+    elim_a = elimination.get("choice_penalties", {}) if isinstance(elimination, dict) else {}
+    elim_b = semantic_elim.get("choice_penalties", {}) if isinstance(semantic_elim, dict) else {}
+    for k in _MCQ_LETTERS:
+        try:
+            combined_penalties[k] = float(elim_a.get(k, 0.0)) + (0.85 * float(elim_b.get(k, 0.0)))
+        except Exception:
+            combined_penalties[k] = float(elim_a.get(k, 0.0)) if isinstance(elim_a, dict) else 0.0
+
     vote = await ctx.call_object(
         "analysis/vote_choice_scores",
         {
-            "maps": [full_score, window_score, code_cues, table_cues] + extra_score_maps,
-            "weights": [1.25, 1.15, 0.65, 0.65] + [0.5 for _ in extra_score_maps],
-            "elimination_penalties": elimination.get("choice_penalties", {}),
-            "elimination_weight": 1.25,
+            "maps": [full_score, window_score, semantic_score, code_cues, table_cues] + extra_score_maps,
+            "weights": [1.15, 1.05, 1.35, 0.55, 0.55] + [0.5 for _ in extra_score_maps],
+            "elimination_penalties": combined_penalties,
+            "elimination_weight": 1.05,
         },
     )
 
@@ -350,7 +447,7 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
     confidence = float(vote.get("confidence", 0.0)) if isinstance(vote, dict) else 0.0
 
     evidence: List[Dict[str, Any]] = []
-    for source in [full_score, window_score, code_cues, table_cues]:
+    for source in [full_score, window_score, semantic_score, code_cues, table_cues]:
         if isinstance(source, dict) and isinstance(source.get("evidence", []), list):
             for ev in source.get("evidence", []):
                 if isinstance(ev, dict):
@@ -361,9 +458,10 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
     output = {
         "segment_id": segment_id,
         "choice_scores": {k: round(float(v), 4) for k, v in choice_scores.items()},
-        "choice_penalties": elimination.get("choice_penalties", {}) if isinstance(elimination, dict) else {},
+        "choice_penalties": {k: round(float(v), 4) for k, v in combined_penalties.items()},
         "eliminated": elimination.get("eliminated", []) if isinstance(elimination, dict) else [],
-        "evidence": evidence[:40],
+        "semantic_eliminated": semantic_elim.get("eliminated", []) if isinstance(semantic_elim, dict) else [],
+        "evidence": evidence[:48],
         "facts": list(analyze.get("facts", [])) if isinstance(analyze.get("facts", []), list) else [],
         "confidence": round(max(0.0, min(1.0, confidence)), 3),
         "task_score": round(max(0.0, min(1.0, confidence)), 3),
@@ -391,7 +489,9 @@ async def longbench_v2_leaf_segment_program(ctx: "GroupContext") -> Dict[str, An
                 "analysis/analyze_segment",
                 "analysis/score_mcq_choices",
                 "analysis/score_mcq_windows",
+                "analysis/semantic_score_mcq_choices",
                 "analysis/eliminate_choices",
+                "analysis/semantic_eliminate_choices",
                 "analysis/extract_code_cues",
                 "analysis/extract_table_cues",
                 "analysis/vote_choice_scores",
@@ -409,6 +509,8 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
     max_children_override = ctx.input_payload.get("max_children")
     policy_config = ctx.input_payload.get("policy_config")
     choices = _choice_map(ctx.input_payload)
+    prompt_style = str(ctx.input_payload.get("prompt_style", "hybrid")).strip().lower()
+    longbench_prompt_dir = str(ctx.input_payload.get("longbench_prompt_dir", "")).strip()
 
     root_extra_calls = _build_extra_calls(ctx.input_payload.get("root_extra_object_fanout", []))
 
@@ -435,104 +537,181 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
     keyword_query = _keyword_query(question)
     choice_queries = [f"{question} {text}" for _, text in sorted(choices.items())]
 
-    retrieval_calls: List[MCPCall] = [
-        MCPCall(
-            object_name="ctx/search_hierarchical",
-            payload={
-                "manifest_path": manifest_path,
-                "query": question,
-                "top_k": max(plan.top_k, max_children),
-                "coarse_k": plan.coarse_k,
-            },
+    retrieval_specs: List[tuple[str, float, MCPCall]] = [
+        (
+            "hybrid_primary",
+            1.10,
+            MCPCall(
+                object_name="ctx/search_hybrid",
+                payload={
+                    "manifest_path": manifest_path,
+                    "query": question,
+                    "top_k": min(96, max(plan.top_k * 2, max_children * 3)),
+                    "coarse_k": max(plan.coarse_k, max_children * 3),
+                    "semantic_top_k": min(160, max(plan.top_k * 6, max_children * 8)),
+                    "lexical_weight": 0.42,
+                    "semantic_weight": 0.58,
+                },
+            ),
         ),
-        MCPCall(
-            object_name="ctx/search_hierarchical",
-            payload={
-                "manifest_path": manifest_path,
-                "query": keyword_query,
-                "top_k": min(64, max(plan.top_k + 8, max_children)),
-                "coarse_k": max(8, plan.coarse_k // 2),
-            },
+        (
+            "semantic_primary",
+            1.00,
+            MCPCall(
+                object_name="ctx/search_semantic",
+                payload={
+                    "manifest_path": manifest_path,
+                    "query": question,
+                    "top_k": min(96, max(plan.top_k * 2, max_children * 3)),
+                    "candidate_k": min(320, max(plan.top_k * 14, max_children * 18)),
+                },
+            ),
         ),
-        MCPCall(
-            object_name="ctx/search_hierarchical_mmr",
-            payload={
-                "manifest_path": manifest_path,
-                "query": question,
-                "top_k": min(64, max(plan.top_k + 8, max_children)),
-                "coarse_k": min(64, max(plan.coarse_k, plan.coarse_k * 2)),
-                "candidate_k": min(128, max(24, plan.top_k * 5)),
-                "lambda_mult": 0.72,
-            },
-        ),
-        MCPCall(
-            object_name="ctx/search_multi_query",
-            payload={
-                "manifest_path": manifest_path,
-                "queries": [question, keyword_query] + choice_queries,
-                "top_k": min(96, max(plan.top_k * 2, max_children * 2)),
-                "per_query_top_k": min(24, max(8, plan.top_k // 2)),
-                "coarse_k": min(64, max(plan.coarse_k, plan.coarse_k * 2)),
-            },
-        ),
-        MCPCall(
-            object_name="ctx/list_level",
-            payload={
-                "manifest_path": manifest_path,
-                "level": 0,
-                "limit": max(24, max_children * 6),
-                "offset": 0,
-            },
-        ),
-    ]
-
-    for choice_letter, choice_text in sorted(choices.items()):
-        retrieval_calls.append(
+        (
+            "lexical_primary",
+            0.92,
             MCPCall(
                 object_name="ctx/search_hierarchical",
                 payload={
                     "manifest_path": manifest_path,
-                    "query": f"{question} {choice_text}",
-                    "top_k": min(40, max(10, plan.top_k // 2)),
-                    "coarse_k": max(8, plan.coarse_k // 2),
-                    "tag": choice_letter,
+                    "query": question,
+                    "top_k": max(plan.top_k, max_children),
+                    "coarse_k": plan.coarse_k,
                 },
+            ),
+        ),
+        (
+            "keyword",
+            0.86,
+            MCPCall(
+                object_name="ctx/search_hybrid",
+                payload={
+                    "manifest_path": manifest_path,
+                    "query": keyword_query,
+                    "top_k": min(80, max(plan.top_k + 8, max_children * 2)),
+                    "coarse_k": max(8, plan.coarse_k // 2),
+                    "semantic_top_k": min(120, max(plan.top_k * 4, max_children * 6)),
+                    "lexical_weight": 0.50,
+                    "semantic_weight": 0.50,
+                },
+            ),
+        ),
+        (
+            "mmr",
+            0.80,
+            MCPCall(
+                object_name="ctx/search_hierarchical_mmr",
+                payload={
+                    "manifest_path": manifest_path,
+                    "query": question,
+                    "top_k": min(64, max(plan.top_k + 8, max_children * 2)),
+                    "coarse_k": min(64, max(plan.coarse_k, plan.coarse_k * 2)),
+                    "candidate_k": min(128, max(24, plan.top_k * 5)),
+                    "lambda_mult": 0.72,
+                },
+            ),
+        ),
+        (
+            "multi_query",
+            0.94,
+            MCPCall(
+                object_name="ctx/search_multi_query",
+                payload={
+                    "manifest_path": manifest_path,
+                    "queries": [question, keyword_query] + choice_queries,
+                    "top_k": min(96, max(plan.top_k * 2, max_children * 2)),
+                    "per_query_top_k": min(24, max(8, plan.top_k // 2)),
+                    "coarse_k": min(64, max(plan.coarse_k, plan.coarse_k * 2)),
+                },
+            ),
+        ),
+        (
+            "level0",
+            0.0,
+            MCPCall(
+                object_name="ctx/list_level",
+                payload={
+                    "manifest_path": manifest_path,
+                    "level": 0,
+                    "limit": max(24, max_children * 6),
+                    "offset": 0,
+                },
+            ),
+        ),
+    ]
+
+    for choice_letter, choice_text in sorted(choices.items()):
+        retrieval_specs.append(
+            (
+                f"choice_{choice_letter}",
+                0.66,
+                MCPCall(
+                    object_name="ctx/search_hybrid",
+                    payload={
+                        "manifest_path": manifest_path,
+                        "query": f"{question} {choice_text}",
+                        "top_k": min(48, max(10, plan.top_k // 2)),
+                        "coarse_k": max(8, plan.coarse_k // 2),
+                        "semantic_top_k": min(96, max(24, plan.top_k * 3)),
+                        "lexical_weight": 0.40,
+                        "semantic_weight": 0.60,
+                        "tag": choice_letter,
+                    },
+                ),
             )
         )
 
-    retrieval_results = await ctx.call_objects(retrieval_calls)
+    retrieval_results = await ctx.call_objects([spec[2] for spec in retrieval_specs])
 
     weighted_sources: List[tuple[str, float, List[Dict[str, Any]]]] = []
     level0_segments: List[Dict[str, Any]] = []
 
-    for idx, result in enumerate(retrieval_results):
+    for (name, weight, _call), result in zip(retrieval_specs, retrieval_results):
         if not isinstance(result, dict):
             continue
-        if idx == 0:
-            weighted_sources.append(("primary", 1.0, list(result.get("hits", []))))
-        elif idx == 1:
-            weighted_sources.append(("keyword", 0.86, list(result.get("hits", []))))
-        elif idx == 2:
-            weighted_sources.append(("mmr", 0.84, list(result.get("hits", []))))
-        elif idx == 3:
-            weighted_sources.append(("multi_query", 0.9, list(result.get("hits", []))))
-        elif idx == 4:
+        if name == "level0":
             level0_segments = list(result.get("segments", []))
-        else:
-            weighted_sources.append((f"choice_{idx-4}", 0.66, list(result.get("hits", []))))
+            continue
+        weighted_sources.append((name, weight, list(result.get("hits", []))))
 
     merged_hits = _merge_hits(weighted_sources, query=question, level0_segments=level0_segments)
 
-    reranked = await ctx.call_object(
-        "analysis/rerank_hits_with_choices",
-        {
-            "query": question,
-            "choices": choices,
-            "hits": merged_hits,
-            "top_k": max(max_children * 4, 24),
-        },
+    rerank_outputs = await ctx.call_objects(
+        [
+            MCPCall(
+                object_name="analysis/rerank_hits_with_choices",
+                payload={
+                    "query": question,
+                    "choices": choices,
+                    "hits": merged_hits,
+                    "top_k": max(max_children * 4, 24),
+                },
+            ),
+            MCPCall(
+                object_name="analysis/semantic_rerank_hits_with_choices",
+                payload={
+                    "query": question,
+                    "choices": choices,
+                    "hits": merged_hits,
+                    "top_k": max(max_children * 4, 24),
+                },
+            ),
+        ]
     )
-    ranked_hits = list(reranked.get("hits", [])) if isinstance(reranked, dict) else merged_hits
+
+    lexical_rerank = []
+    semantic_rerank = []
+    if len(rerank_outputs) > 0 and isinstance(rerank_outputs[0], dict):
+        lexical_rerank = list(rerank_outputs[0].get("hits", []))
+    if len(rerank_outputs) > 1 and isinstance(rerank_outputs[1], dict):
+        semantic_rerank = list(rerank_outputs[1].get("hits", []))
+
+    ranked_hits = _merge_reranked_hits(
+        merged_hits=merged_hits,
+        lexical_rerank=lexical_rerank,
+        semantic_rerank=semantic_rerank,
+        top_k=max(max_children * 4, 24),
+    )
 
     ctx.local_state["root_retrieval_summary"] = {
         "question": question,
@@ -556,7 +735,7 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
             "manifest_path": manifest_path,
             "merged_hits": len(merged_hits),
             "ranked_hits": len(ranked_hits),
-            "root_parallel_calls": [c.object_name for c in retrieval_calls] + [c.object_name for c in root_extra_calls],
+            "root_parallel_calls": [c.object_name for _, _, c in retrieval_specs] + [c.object_name for c in root_extra_calls],
             "root_extra_results": extra_results,
             "policy_config": resolved_policy_config or {"mode": "heuristic"},
             "policy_plan": {
@@ -565,6 +744,8 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
                 "max_children": max_children,
                 "read_max_chars": plan.read_max_chars,
             },
+            "prompt_style": prompt_style,
+            "longbench_prompt_dir": longbench_prompt_dir,
         },
         confidence=1.0,
     )
@@ -580,6 +761,7 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
                 "evidence": [],
                 "failed_children": 0,
                 "task_score": 0.0,
+                "prompt_style": prompt_style,
             }
         )
 
@@ -678,13 +860,36 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
         if isinstance(ev, dict)
     ]
 
-    choice_lines = "\n".join([f"({k}) {v}" for k, v in sorted(choices.items())])
+    evidence_context_lines: List[str] = []
+    for item in evidence[:36]:
+        if not isinstance(item, dict):
+            continue
+        text_item = str(item.get("text", "")).strip()
+        if not text_item:
+            continue
+        choice = str(item.get("choice", "")).strip().upper()
+        if choice in _MCQ_LETTERS:
+            evidence_context_lines.append(f"[{choice}] {text_item}")
+        else:
+            evidence_context_lines.append(text_item)
+
+    evidence_context = "\n".join(evidence_context_lines)
+    prompt_set = load_prompt_set(longbench_prompt_dir or None)
+    official_prompt = render_longbench_prompt(
+        style=prompt_style,
+        question=question,
+        choices=choices,
+        context=evidence_context,
+        prompt_set=prompt_set,
+    )
+
     query_for_policy = (
-        "You are solving a multiple-choice question.\n"
-        "Return ONLY one final answer in this exact format: The correct answer is (X).\n\n"
-        f"Question: {question}\n"
-        f"Choices:\n{choice_lines}\n"
-        f"Fallback candidate: {fallback_choice}"
+        "You are solving a LongBench-style multiple-choice question.\n"
+        "Use the prompt content and return final answer in required format.\n"
+        "If uncertain, choose one option.\n\n"
+        + official_prompt
+        + "\n\n"
+        + "Output format reminder: The correct answer is (X)."
     )
 
     final_policy = await policy.finalize_answer(query=query_for_policy, merged=merged, facts=facts_for_policy)
@@ -716,6 +921,7 @@ async def longbench_v2_root_program(ctx: "GroupContext") -> Dict[str, Any]:
         "evidence": evidence,
         "failed_children": failed_children,
         "task_score": round(max(0.0, min(1.0, final_conf)), 3),
+        "prompt_style": prompt_style,
     }
 
     await ctx.write_memory(

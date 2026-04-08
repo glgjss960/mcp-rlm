@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List
@@ -27,6 +27,48 @@ def _resolve_manifest(params: Dict[str, Any], default_manifest: str | None) -> s
 
 def _tokenize(text: str) -> List[str]:
     return [t for t in re.findall(r"[a-zA-Z0-9_]+", str(text).lower()) if len(t) > 1]
+
+
+def _choice_map(payload: Dict[str, Any]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    raw = payload.get('choices')
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            letter = str(k).strip().upper()
+            if letter in {'A', 'B', 'C', 'D'}:
+                out[letter] = str(v).strip()
+    for letter in ['A', 'B', 'C', 'D']:
+        if letter in out:
+            continue
+        field = f'choice_{letter}'
+        if field in payload:
+            text = str(payload.get(field, '')).strip()
+            if text:
+                out[letter] = text
+    return out
+
+
+def _focus_terms_from_payload(payload: Dict[str, Any]) -> List[str]:
+    terms: List[str] = []
+    query = str(payload.get('query') or payload.get('question') or '').strip()
+    if query:
+        terms.extend(_tokenize(query))
+    choices = _choice_map(payload)
+    for _, value in sorted(choices.items()):
+        terms.extend(_tokenize(value))
+    explicit = payload.get('focus_terms')
+    if isinstance(explicit, list):
+        for item in explicit:
+            terms.extend(_tokenize(str(item)))
+
+    dedup: List[str] = []
+    seen = set()
+    for t in terms:
+        if t in seen:
+            continue
+        seen.add(t)
+        dedup.append(t)
+    return dedup[:128]
 
 
 def _window_text(text: str, *, window_chars: int, stride_chars: int) -> List[Dict[str, Any]]:
@@ -128,18 +170,7 @@ async def main() -> None:
         stride_chars = int(payload.get('stride_chars', max(1, window_chars // 2)))
         max_windows = max(1, int(payload.get('max_windows', 8)))
 
-        focus_terms: List[str] = []
-        query = str(payload.get('query', '')).strip()
-        if query:
-            focus_terms.extend(_tokenize(query))
-        raw_choices = payload.get('choices')
-        if isinstance(raw_choices, dict):
-            for _, value in raw_choices.items():
-                focus_terms.extend(_tokenize(str(value)))
-        explicit_terms = payload.get('focus_terms')
-        if isinstance(explicit_terms, list):
-            for term in explicit_terms:
-                focus_terms.extend(_tokenize(str(term)))
+        focus_terms = _focus_terms_from_payload(payload)
 
         windows = _window_text(full_text, window_chars=window_chars, stride_chars=stride_chars)
         for w in windows:
@@ -160,6 +191,64 @@ async def main() -> None:
             'windows': selected,
         }
 
+    def read_segment_adaptive(payload: Dict[str, Any], _) -> Dict[str, Any]:
+        manifest = _resolve_manifest(payload, default_manifest)
+        store = cache.get(manifest)
+        segment_id = str(payload.get('segment_id', '')).strip()
+        if not segment_id:
+            raise RuntimeError('read_segment_adaptive requires segment_id')
+
+        segment = store.read_segment(segment_id, max_chars=None, offset=0)
+        full_text = str(segment.get('text', ''))
+        if not full_text.strip():
+            return {
+                'segment': segment.get('segment', {}),
+                'segment_id': segment_id,
+                'text': '',
+                'returned_chars': 0,
+                'windows': [],
+            }
+
+        max_chars = max(400, int(payload.get('max_chars', 6000)))
+        window_chars = max(400, int(payload.get('window_chars', min(3200, max_chars))))
+        stride_chars = max(120, int(payload.get('stride_chars', max(400, window_chars // 2))))
+        max_windows = max(1, int(payload.get('max_windows', 6)))
+
+        focus_terms = _focus_terms_from_payload(payload)
+        windows = _window_text(full_text, window_chars=window_chars, stride_chars=stride_chars)
+        for w in windows:
+            w['score'] = _focus_score(str(w.get('text', '')), focus_terms)
+
+        windows.sort(key=lambda x: float(x.get('score', 0.0)), reverse=True)
+        selected = windows[:max_windows]
+        selected.sort(key=lambda x: int(x.get('offset', 0)))
+
+        chunks: List[str] = []
+        consumed = 0
+        for w in selected:
+            text = str(w.get('text', ''))
+            if not text:
+                continue
+            remain = max_chars - consumed
+            if remain <= 0:
+                break
+            take = text[:remain]
+            if take:
+                chunks.append(take)
+                consumed += len(take)
+
+        combined = '\n\n'.join(chunks)
+        return {
+            'segment': segment.get('segment', {}),
+            'segment_id': segment_id,
+            'text': combined,
+            'returned_chars': len(combined),
+            'windows': selected,
+            'focus_terms': focus_terms,
+            'window_chars': window_chars,
+            'stride_chars': stride_chars,
+        }
+
     def search_hierarchical(payload: Dict[str, Any], _) -> Dict[str, Any]:
         manifest = _resolve_manifest(payload, default_manifest)
         store = cache.get(manifest)
@@ -169,6 +258,42 @@ async def main() -> None:
         top_k = int(payload.get('top_k', 12))
         coarse_k = int(payload.get('coarse_k', 24))
         return store.search_hierarchical(query=query, top_k=top_k, coarse_k=coarse_k)
+
+    def search_semantic(payload: Dict[str, Any], _) -> Dict[str, Any]:
+        manifest = _resolve_manifest(payload, default_manifest)
+        store = cache.get(manifest)
+        query = str(payload.get('query', '')).strip()
+        if not query:
+            raise RuntimeError('search_semantic requires query')
+        top_k = int(payload.get('top_k', 12))
+        candidate_k = int(payload.get('candidate_k', 160))
+        lexical_boost_weight = float(payload.get('lexical_boost_weight', 0.12))
+        return store.search_semantic(
+            query=query,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            lexical_boost_weight=lexical_boost_weight,
+        )
+
+    def search_hybrid(payload: Dict[str, Any], _) -> Dict[str, Any]:
+        manifest = _resolve_manifest(payload, default_manifest)
+        store = cache.get(manifest)
+        query = str(payload.get('query', '')).strip()
+        if not query:
+            raise RuntimeError('search_hybrid requires query')
+        top_k = int(payload.get('top_k', 12))
+        coarse_k = int(payload.get('coarse_k', 24))
+        semantic_top_k = int(payload.get('semantic_top_k', max(48, top_k * 4)))
+        lexical_weight = float(payload.get('lexical_weight', 0.45))
+        semantic_weight = float(payload.get('semantic_weight', 0.55))
+        return store.search_hybrid(
+            query=query,
+            top_k=top_k,
+            coarse_k=coarse_k,
+            semantic_top_k=semantic_top_k,
+            lexical_weight=lexical_weight,
+            semantic_weight=semantic_weight,
+        )
 
     def search_multi_query(payload: Dict[str, Any], _) -> Dict[str, Any]:
         manifest = _resolve_manifest(payload, default_manifest)
@@ -206,10 +331,11 @@ async def main() -> None:
         query_results: List[Dict[str, Any]] = []
 
         for idx, query in enumerate(queries):
-            search = store.search_hierarchical(
+            search = store.search_hybrid(
                 query=query,
                 top_k=per_query_top_k,
                 coarse_k=coarse_k,
+                semantic_top_k=max(16, per_query_top_k * 2),
             )
             query_results.append({'query': query, 'hits': search.get('hits', [])})
             hits = search.get('hits', [])
@@ -266,7 +392,12 @@ async def main() -> None:
         lambda_mult = float(payload.get('lambda_mult', 0.75))
         lambda_mult = max(0.0, min(1.0, lambda_mult))
 
-        base = store.search_hierarchical(query=query, top_k=candidate_k, coarse_k=coarse_k)
+        base = store.search_hybrid(
+            query=query,
+            top_k=candidate_k,
+            coarse_k=coarse_k,
+            semantic_top_k=max(candidate_k, top_k * 6),
+        )
         base_hits = [x for x in base.get('hits', []) if isinstance(x, dict)]
         if not base_hits:
             return {
@@ -315,17 +446,104 @@ async def main() -> None:
             'hits': selected,
         }
 
+    def read_evidence_bundle(payload: Dict[str, Any], _) -> Dict[str, Any]:
+        manifest = _resolve_manifest(payload, default_manifest)
+        store = cache.get(manifest)
+        query = str(payload.get('query') or payload.get('question') or '').strip()
+        if not query:
+            raise RuntimeError('read_evidence_bundle requires query/question')
+
+        mode = str(payload.get('mode', 'hybrid')).strip().lower()
+        top_k_segments = max(1, int(payload.get('top_k_segments', 6)))
+        per_segment_chars = max(400, int(payload.get('per_segment_chars', 2600)))
+        total_char_budget = max(800, int(payload.get('total_char_budget', 12000)))
+
+        if mode == 'semantic':
+            search = store.search_semantic(query=query, top_k=top_k_segments)
+        elif mode == 'lexical':
+            search = store.search_hierarchical(query=query, top_k=top_k_segments, coarse_k=max(24, top_k_segments * 4))
+        else:
+            search = store.search_hybrid(query=query, top_k=top_k_segments, coarse_k=max(24, top_k_segments * 4))
+
+        hits = [h for h in search.get('hits', []) if isinstance(h, dict)]
+
+        bundle_items: List[Dict[str, Any]] = []
+        merged_chunks: List[str] = []
+        consumed = 0
+
+        for hit in hits:
+            seg_id = str(hit.get('segment_id', '')).strip()
+            if not seg_id:
+                continue
+
+            adaptive = read_segment_adaptive(
+                {
+                    'manifest_path': manifest,
+                    'segment_id': seg_id,
+                    'query': query,
+                    'choices': _choice_map(payload),
+                    'max_chars': per_segment_chars,
+                    'window_chars': int(payload.get('window_chars', min(2400, per_segment_chars))),
+                    'stride_chars': int(payload.get('stride_chars', max(300, min(1200, per_segment_chars // 2)))),
+                    'max_windows': int(payload.get('max_windows', 5)),
+                },
+                _,
+            )
+
+            seg_text = str(adaptive.get('text', ''))
+            if not seg_text:
+                continue
+            remain = total_char_budget - consumed
+            if remain <= 0:
+                break
+            take = seg_text[:remain]
+            if not take:
+                continue
+
+            merged_chunks.append(take)
+            consumed += len(take)
+            bundle_items.append(
+                {
+                    'segment_id': seg_id,
+                    'score': hit.get('score', 0.0),
+                    'semantic_score': hit.get('semantic_score', 0.0),
+                    'lexical_score': hit.get('lexical_score', 0.0),
+                    'preview': hit.get('preview', ''),
+                    'returned_chars': len(take),
+                    'windows': adaptive.get('windows', []),
+                }
+            )
+
+        context = '\n\n====\n\n'.join(merged_chunks)
+        return {
+            'query': query,
+            'mode': mode,
+            'top_k_segments': top_k_segments,
+            'per_segment_chars': per_segment_chars,
+            'total_char_budget': total_char_budget,
+            'used_chars': len(context),
+            'hits': hits,
+            'bundle': bundle_items,
+            'context': context,
+        }
+
     registry.register('context_stats', context_stats)
     registry.register('list_level', list_level)
     registry.register('read_segment', read_segment)
     registry.register('read_segment_windows', read_segment_windows)
+    registry.register('read_segment_adaptive', read_segment_adaptive)
+
     registry.register('search_hierarchical', search_hierarchical)
+    registry.register('search_semantic', search_semantic)
+    registry.register('search_hybrid', search_hybrid)
     registry.register('search_multi_query', search_multi_query)
     registry.register('search_hierarchical_mmr', search_hierarchical_mmr)
 
+    registry.register('read_evidence_bundle', read_evidence_bundle)
+
     server = StdioMCPServer(
         registry=registry,
-        server_info=MCPServerInfo(name='mcp-rlm-context-server', version='0.2.0'),
+        server_info=MCPServerInfo(name='mcp-rlm-context-server', version='0.3.0'),
         prefer_official_sdk=not args.legacy_mcp,
         strict_official_sdk=bool(args.require_official_sdk),
     )

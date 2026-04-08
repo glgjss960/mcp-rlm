@@ -270,22 +270,27 @@ python examples/run_mvp_pipeline.py   --input data/long_context.txt   --query "y
 
 ### 3.3 LongBench-v2 (supported)
 
-Run:
+`run_longbench_v2_eval.py` now supports two tracks:
+
+- `--track mvp`: fixed recursive program (`longbench_v2_root`)
+- `--track llm_manager`: LLM-managed root control loop (`llm_managed_root`)
+
+MVP track (default):
 
 ```bash
-python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2   --policy-mode heuristic
+python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2_mvp   --track mvp   --policy-mode huggingface   --model Qwen/Qwen2.5-7B-Instruct   --hf-device-map auto   --hf-torch-dtype bfloat16   --hf-max-new-tokens 256   --prompt-style hybrid   --export-trace
 ```
 
-With OpenRouter:
+LLM-managed track:
 
 ```bash
-python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2   --policy-mode openrouter   --model openai/gpt-4o-mini   --api-key <OPENROUTER_API_KEY>
+python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2_manager   --track llm_manager   --policy-mode openrouter   --model openai/gpt-4o-mini   --api-key <OPENROUTER_API_KEY>   --manager-max-turns 56   --manager-max-history 10   --default-child-program llm_managed_child   --prompt-style 0shot   --export-trace
 ```
 
-With vLLM:
+Use official LongBench prompt templates when available:
 
 ```bash
-python examples/run_longbench_v2_eval.py   --dataset-file ../LongBench/data.json   --out artifacts/longbench_v2   --policy-mode vllm   --model Qwen/Qwen2.5-7B-Instruct   --api-base http://127.0.0.1:8000/v1
+--prompt-style 0shot --longbench-prompt-dir ../LongBench/prompts
 ```
 
 Useful controls:
@@ -294,8 +299,44 @@ Useful controls:
 - `--limit N`
 - `--ids id1,id2,...`
 - `--resume`
+- `--group-max-wall-seconds 900`
 
-### 3.4 BabiLong and RepoQA (adapter workflow, no built-in runner yet)
+Per-sample outputs:
+
+- `artifacts/.../runs/<_id>/context_store/manifest.json`
+- `artifacts/.../runs/<_id>/memory/`
+- `artifacts/.../runs/<_id>/trace/` (when `--export-trace`)
+- global result file: `artifacts/.../results.jsonl`
+
+### 3.4 LLM-managed Root Group (external dataset, end-to-end)
+
+This mode enables the control loop:
+
+- LLM decides next action
+- Runtime executes action
+- Runtime observation returns to LLM
+- LLM decides again until finalize
+
+Runner:
+
+```bash
+python examples/run_llm_manager_dataset.py   --dataset-file path/to/data.jsonl   --out artifacts/llm_manager_eval   --policy-mode openrouter   --model openai/gpt-4o-mini   --api-key <OPENROUTER_API_KEY>
+```
+
+Local HuggingFace example:
+
+```bash
+python examples/run_llm_manager_dataset.py   --dataset-file path/to/data.jsonl   --out artifacts/llm_manager_eval_hf   --policy-mode huggingface   --model Qwen/Qwen2.5-7B-Instruct   --hf-device-map auto   --hf-torch-dtype bfloat16   --hf-max-new-tokens 256
+```
+
+Important notes:
+
+- Root program defaults to `llm_managed_root`.
+- Child program defaults to `llm_managed_child`.
+- For true LLM-managed loop, use `--policy-mode` in `openai/openrouter/vllm/ollama/huggingface`.
+- `heuristic` mode does not implement manager JSON action generation.
+
+### 3.5 BabiLong and RepoQA (adapter workflow, no built-in runner yet)
 
 Current status:
 
@@ -308,6 +349,20 @@ Recommended adapter path:
 2. For QA-style tasks, run `run_mvp_inference.py` / `run_mvp_pipeline.py` per sample.
 3. Save prediction + ground truth and score externally.
 4. If needed, add a dedicated runner following `examples/run_longbench_v2_eval.py` structure.
+
+### 3.6 Minimal MCP object smoke
+
+Use this to quickly validate critical LongBench objects under SDK mode:
+
+```bash
+python examples/smoke_longbench_sdk_objects.py   --context-file data/long_context.txt   --query "your question"   --choice-a "A text" --choice-b "B text" --choice-c "C text" --choice-d "D text"
+```
+
+It validates these objects:
+
+- `ctx/context_stats`
+- `ctx/search_hierarchical`
+- `analysis/score_mcq_choices`
 
 ## 4) RL (On-policy with VERL)
 
@@ -325,10 +380,26 @@ Reference doc:
 {"query": "question 2"}
 ```
 
+For LongBench-style online RL, put `question` and `choices` into `metadata` fields of each query item.
+
 ### 4.2 Rollout + dataset export only (no PPO)
 
+MVP root rollout:
+
 ```bash
-python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl   --iterations 1   --episodes-per-iter 8   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct   --skip-verl-train
+python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl   --program mvp_root   --iterations 1   --episodes-per-iter 8   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct   --skip-verl-train
+```
+
+LLM-managed root rollout:
+
+```bash
+python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl_manager   --program llm_managed_root   --manager-max-turns 56   --manager-max-history 10   --default-child-program llm_managed_child   --policy-mode openrouter   --model openai/gpt-4o-mini   --api-key <OPENROUTER_API_KEY>   --skip-verl-train
+```
+
+LongBench-root rollout style controls:
+
+```bash
+--program longbench_v2_root --prompt-style hybrid --longbench-prompt-dir ../LongBench/prompts
 ```
 
 ### 4.3 Full on-policy loop with VERL PPO
@@ -336,7 +407,7 @@ python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store
 Assume VERL repo exists at `../verl`.
 
 ```bash
-python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl   --iterations 2   --episodes-per-iter 8   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct   --actor-model-path Qwen/Qwen2.5-3B-Instruct   --verl-repo ../verl   --reward-manager-source register   --reward-manager-name mcp_rlm
+python examples/run_online_ppo_with_verl.py   --manifest artifacts/context_store/manifest.json   --queries data/queries.jsonl   --out artifacts/online_rl   --program llm_managed_root   --iterations 2   --episodes-per-iter 8   --policy-mode huggingface   --model Qwen/Qwen2.5-3B-Instruct   --actor-model-path Qwen/Qwen2.5-3B-Instruct   --verl-repo ../verl   --reward-manager-source register   --reward-manager-name mcp_rlm
 ```
 
 Importlib reward manager fallback:
@@ -456,16 +527,22 @@ MVP one-command:
 python examples/run_mvp_pipeline.py --input data/long_context.txt --query-file data/query.txt
 ```
 
-LongBench-v2:
+LongBench-v2 (MVP track):
 
 ```bash
-python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2 --policy-mode heuristic
+python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2 --track mvp --policy-mode huggingface --model Qwen/Qwen2.5-7B-Instruct
+```
+
+LongBench-v2 (LLM-managed track):
+
+```bash
+python examples/run_longbench_v2_eval.py --dataset-file ../LongBench/data.json --out artifacts/longbench_v2_manager --track llm_manager --policy-mode openrouter --model openai/gpt-4o-mini --api-key <OPENROUTER_API_KEY>
 ```
 
 On-policy RL (dataset only):
 
 ```bash
-python examples/run_online_ppo_with_verl.py --manifest artifacts/context_store/manifest.json --queries data/queries.jsonl --skip-verl-train
+python examples/run_online_ppo_with_verl.py --manifest artifacts/context_store/manifest.json --queries data/queries.jsonl --program llm_managed_root --skip-verl-train
 ```
 
 Run tests:
