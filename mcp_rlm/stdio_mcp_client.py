@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Sequence
 import asyncio
 import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 
 from .mcp import MCPCall, MCPInvocationContext, MCPResult
@@ -15,6 +16,51 @@ from .mcp_sdk import ensure_mcp_sdk, mcp_sdk_status
 
 _SDK_AVAILABLE = False
 _SDK_IMPORT_ERROR: Optional[Exception] = None
+
+
+def _to_bool(raw: Any, *, default: bool = False) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _to_timeout(raw: Any, *, default: float, low: float = 0.1, high: float = 7200.0) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
+def _stage_log(
+    *,
+    enabled: bool,
+    component: str,
+    stage: str,
+    status: str,
+    elapsed_ms: Optional[int] = None,
+    detail: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not enabled:
+        return
+    payload: Dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "component": component,
+        "stage": stage,
+        "status": status,
+    }
+    if elapsed_ms is not None:
+        payload["elapsed_ms"] = int(elapsed_ms)
+    if detail:
+        payload["detail"] = detail
+    print("[mcp-rlm-stage] " + json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
 try:
     ensure_mcp_sdk()
@@ -84,6 +130,7 @@ class StdioMCPClient:
         self._pending: Dict[int, asyncio.Future[Any]] = {}
         self._stderr_buffer: List[str] = []
         self._started = False
+        self._stage_logs_enabled = _to_bool(os.getenv("MCP_RLM_DEBUG_STAGE_LOGS"), default=True)
 
     @staticmethod
     def _is_writable_dir(path: str) -> bool:
@@ -152,16 +199,68 @@ class StdioMCPClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
 
-    async def list_tools(self) -> List[str]:
+    async def list_tools(self, *, timeout_seconds: Optional[float] = None) -> List[str]:
         await self.start()
-        if self._use_sdk:
-            session = self._require_session()
-            response = await session.list_tools()
-            return [str(tool.name) for tool in response.tools if getattr(tool, 'name', None)]
+        resolved_timeout = _to_timeout(
+            timeout_seconds if timeout_seconds is not None else self._default_request_timeout_seconds,
+            default=self._default_request_timeout_seconds,
+        )
+        start = perf_counter()
+        _stage_log(
+            enabled=self._stage_logs_enabled,
+            component="mcp_client.stdio",
+            stage="list_tools",
+            status="start",
+            detail={"use_sdk": self._use_sdk, "timeout_seconds": resolved_timeout, "command": self._command},
+        )
+        try:
+            if self._use_sdk:
+                session = self._require_session()
+                try:
+                    response = await asyncio.wait_for(session.list_tools(), timeout=resolved_timeout)
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(f"list_tools timeout after {resolved_timeout:.1f}s (sdk)") from exc
+                tools = [str(tool.name) for tool in response.tools if getattr(tool, 'name', None)]
+            else:
+                result = await asyncio.wait_for(
+                    self._send_request('tools/list', {}, timeout_seconds=resolved_timeout),
+                    timeout=resolved_timeout,
+                )
+                raw_tools = result.get('tools', []) if isinstance(result, dict) else []
+                tools = [str(t.get('name')) for t in raw_tools if isinstance(t, dict) and t.get('name')]
+        except asyncio.TimeoutError as exc:
+            elapsed_ms = int((perf_counter() - start) * 1000)
+            _stage_log(
+                enabled=self._stage_logs_enabled,
+                component="mcp_client.stdio",
+                stage="list_tools",
+                status="timeout",
+                elapsed_ms=elapsed_ms,
+                detail={"timeout_seconds": resolved_timeout, "use_sdk": self._use_sdk},
+            )
+            raise RuntimeError(f"list_tools timeout after {resolved_timeout:.1f}s") from exc
+        except Exception as exc:
+            elapsed_ms = int((perf_counter() - start) * 1000)
+            _stage_log(
+                enabled=self._stage_logs_enabled,
+                component="mcp_client.stdio",
+                stage="list_tools",
+                status="error",
+                elapsed_ms=elapsed_ms,
+                detail={"error": str(exc), "error_type": type(exc).__name__, "use_sdk": self._use_sdk},
+            )
+            raise
 
-        result = await self._send_request('tools/list', {}, timeout_seconds=self._default_request_timeout_seconds)
-        tools = result.get('tools', []) if isinstance(result, dict) else []
-        return [str(t.get('name')) for t in tools if isinstance(t, dict) and t.get('name')]
+        elapsed_ms = int((perf_counter() - start) * 1000)
+        _stage_log(
+            enabled=self._stage_logs_enabled,
+            component="mcp_client.stdio",
+            stage="list_tools",
+            status="ok",
+            elapsed_ms=elapsed_ms,
+            detail={"num_tools": len(tools), "use_sdk": self._use_sdk},
+        )
+        return tools
 
     async def call(self, call: MCPCall, ctx: MCPInvocationContext) -> MCPResult:
         try:

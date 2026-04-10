@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import asyncio
 import json
+import os
 import re
+import sys
+from datetime import datetime, timezone
+from time import perf_counter
 
 from .mcp import MCPCall
 from .policy import build_policy_from_config
@@ -53,6 +57,57 @@ _DEFAULT_FINALIZE_SYSTEM_PROMPT = (
     "You are finalizing an MCP-RLM episode. "
     "Return ONLY one JSON object as final output for runtime finalize."
 )
+
+
+def _to_bool(raw: Any, *, default: bool = False) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _to_timeout(raw: Any, *, default: float, low: float = 0.1, high: float = 7200.0) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
+def _stage_log(
+    *,
+    enabled: bool,
+    component: str,
+    stage: str,
+    status: str,
+    episode_id: str = "",
+    group_id: str = "",
+    elapsed_ms: Optional[int] = None,
+    detail: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not enabled:
+        return
+    payload: Dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "component": component,
+        "stage": stage,
+        "status": status,
+    }
+    if episode_id:
+        payload["episode_id"] = episode_id
+    if group_id:
+        payload["group_id"] = group_id
+    if elapsed_ms is not None:
+        payload["elapsed_ms"] = int(elapsed_ms)
+    if detail:
+        payload["detail"] = _jsonable(detail, max_chars=1200)
+    print("[mcp-rlm-stage] " + json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
 def _clip_text(text: str, *, max_chars: int = 4000) -> str:
@@ -135,10 +190,77 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     return payload
 
 
-async def _policy_chat_json(policy: Any, *, system: str, user: str) -> Dict[str, Any]:
+async def _policy_chat_json(
+    policy: Any,
+    *,
+    system: str,
+    user: str,
+    timeout_seconds: float,
+    stage_log_enabled: bool,
+    episode_id: str,
+    group_id: str,
+    stage_label: str,
+) -> Dict[str, Any]:
     chat_json = getattr(policy, "_chat_json", None)
     if callable(chat_json):
-        raw = await chat_json(system=system, user=user)
+        start = perf_counter()
+        _stage_log(
+            enabled=stage_log_enabled,
+            component="llm_manager",
+            stage=stage_label,
+            status="start",
+            episode_id=episode_id,
+            group_id=group_id,
+            detail={
+                "timeout_seconds": timeout_seconds,
+                "policy_type": type(policy).__name__,
+                "user_chars": len(user),
+            },
+        )
+        try:
+            raw = await asyncio.wait_for(
+                chat_json(system=system, user=user),
+                timeout=_to_timeout(timeout_seconds, default=120.0),
+            )
+        except asyncio.TimeoutError as exc:
+            elapsed_ms = int((perf_counter() - start) * 1000)
+            _stage_log(
+                enabled=stage_log_enabled,
+                component="llm_manager",
+                stage=stage_label,
+                status="timeout",
+                episode_id=episode_id,
+                group_id=group_id,
+                elapsed_ms=elapsed_ms,
+                detail={"timeout_seconds": timeout_seconds},
+            )
+            raise RuntimeError(
+                f"{stage_label} timed out after {timeout_seconds:.1f}s (policy={type(policy).__name__})"
+            ) from exc
+        except Exception as exc:
+            elapsed_ms = int((perf_counter() - start) * 1000)
+            _stage_log(
+                enabled=stage_log_enabled,
+                component="llm_manager",
+                stage=stage_label,
+                status="error",
+                episode_id=episode_id,
+                group_id=group_id,
+                elapsed_ms=elapsed_ms,
+                detail={"error": str(exc), "error_type": type(exc).__name__},
+            )
+            raise
+
+        elapsed_ms = int((perf_counter() - start) * 1000)
+        _stage_log(
+            enabled=stage_log_enabled,
+            component="llm_manager",
+            stage=stage_label,
+            status="ok",
+            episode_id=episode_id,
+            group_id=group_id,
+            elapsed_ms=elapsed_ms,
+        )
         if isinstance(raw, dict):
             return raw
         return _extract_json_object(str(raw))
@@ -189,18 +311,75 @@ def _format_group_result(item: GroupResult) -> Dict[str, Any]:
     }
 
 
-async def _list_available_objects(ctx: "GroupContext") -> List[str]:
+async def _list_available_objects(
+    ctx: "GroupContext",
+    *,
+    timeout_seconds: float,
+    stage_log_enabled: bool,
+) -> List[str]:
     client = getattr(ctx._runtime, "mcp_client", None)
     if client is None:
         return []
     list_fn = getattr(client, "list_objects", None)
     if not callable(list_fn):
         return []
+    start = perf_counter()
+    _stage_log(
+        enabled=stage_log_enabled,
+        component="llm_manager",
+        stage="list_objects",
+        status="start",
+        episode_id=ctx.episode_id,
+        group_id=ctx.group_id,
+        detail={"timeout_seconds": timeout_seconds},
+    )
     try:
-        items = await list_fn()
-    except Exception:
+        try:
+            items = await asyncio.wait_for(
+                list_fn(timeout_seconds=timeout_seconds),
+                timeout=_to_timeout(timeout_seconds, default=20.0),
+            )
+        except TypeError:
+            items = await asyncio.wait_for(
+                list_fn(),
+                timeout=_to_timeout(timeout_seconds, default=20.0),
+            )
+    except asyncio.TimeoutError:
+        _stage_log(
+            enabled=stage_log_enabled,
+            component="llm_manager",
+            stage="list_objects",
+            status="timeout",
+            episode_id=ctx.episode_id,
+            group_id=ctx.group_id,
+            elapsed_ms=int((perf_counter() - start) * 1000),
+            detail={"timeout_seconds": timeout_seconds},
+        )
         return []
-    return sorted([str(x) for x in items if str(x).strip()])
+    except Exception as exc:
+        _stage_log(
+            enabled=stage_log_enabled,
+            component="llm_manager",
+            stage="list_objects",
+            status="error",
+            episode_id=ctx.episode_id,
+            group_id=ctx.group_id,
+            elapsed_ms=int((perf_counter() - start) * 1000),
+            detail={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return []
+    out = sorted([str(x) for x in items if str(x).strip()])
+    _stage_log(
+        enabled=stage_log_enabled,
+        component="llm_manager",
+        stage="list_objects",
+        status="ok",
+        episode_id=ctx.episode_id,
+        group_id=ctx.group_id,
+        elapsed_ms=int((perf_counter() - start) * 1000),
+        detail={"num_objects": len(out)},
+    )
+    return out
 
 
 def _pending_status_snapshot(ctx: "GroupContext", pending_ids: List[str]) -> List[Dict[str, Any]]:
@@ -513,13 +692,35 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
 
     manager_system_prompt = str(ctx.input_payload.get("manager_system_prompt", _DEFAULT_MANAGER_SYSTEM_PROMPT))
     finalize_system_prompt = str(ctx.input_payload.get("manager_finalize_system_prompt", _DEFAULT_FINALIZE_SYSTEM_PROMPT))
+    stage_log_enabled = _to_bool(
+        ctx.input_payload.get("manager_debug_stage_logs"),
+        default=_to_bool(os.getenv("MCP_RLM_DEBUG_STAGE_LOGS"), default=True),
+    )
+    list_objects_timeout_seconds = _to_timeout(
+        ctx.input_payload.get(
+            "manager_list_objects_timeout_seconds",
+            os.getenv("MCP_RLM_MANAGER_LIST_OBJECTS_TIMEOUT_SECONDS", "20"),
+        ),
+        default=20.0,
+    )
+    policy_chat_timeout_seconds = _to_timeout(
+        ctx.input_payload.get(
+            "manager_policy_chat_timeout_seconds",
+            os.getenv("MCP_RLM_MANAGER_POLICY_CHAT_TIMEOUT_SECONDS", "120"),
+        ),
+        default=120.0,
+    )
 
     script = ctx.input_payload.get("manager_script", [])
     if not isinstance(script, list):
         script = []
     script_index = 0
 
-    available_objects = await _list_available_objects(ctx)
+    available_objects = await _list_available_objects(
+        ctx,
+        timeout_seconds=list_objects_timeout_seconds,
+        stage_log_enabled=stage_log_enabled,
+    )
     pending_children: List[str] = []
     known_memory_keys: List[str] = []
     history: List[Dict[str, Any]] = []
@@ -548,6 +749,11 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
                 policy,
                 system=manager_system_prompt,
                 user=json.dumps(turn_payload, ensure_ascii=False),
+                timeout_seconds=policy_chat_timeout_seconds,
+                stage_log_enabled=stage_log_enabled,
+                episode_id=ctx.episode_id,
+                group_id=ctx.group_id,
+                stage_label=f"manager_turn_{turn}_policy_chat",
             )
             action = action_raw.get("action", action_raw) if isinstance(action_raw, dict) else {}
             if not isinstance(action, dict):
@@ -628,6 +834,11 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
             policy,
             system=finalize_system_prompt,
             user=json.dumps(finalize_payload, ensure_ascii=False),
+            timeout_seconds=policy_chat_timeout_seconds,
+            stage_log_enabled=stage_log_enabled,
+            episode_id=ctx.episode_id,
+            group_id=ctx.group_id,
+            stage_label="manager_finalize_policy_chat",
         )
         final_output = final_raw.get("output", final_raw) if isinstance(final_raw, dict) else {"output": final_raw}
         if not isinstance(final_output, dict):
