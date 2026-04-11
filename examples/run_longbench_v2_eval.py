@@ -55,6 +55,12 @@ def build_policy_config(args: argparse.Namespace) -> dict[str, object]:
         cfg["hf_torch_dtype"] = args.hf_torch_dtype
     if args.hf_max_new_tokens > 0:
         cfg["hf_max_new_tokens"] = args.hf_max_new_tokens
+    if args.hf_chat_timeout_seconds > 0:
+        cfg["hf_chat_timeout_seconds"] = float(args.hf_chat_timeout_seconds)
+    if args.hf_load_timeout_seconds > 0:
+        cfg["hf_load_timeout_seconds"] = float(args.hf_load_timeout_seconds)
+    if args.hf_generate_timeout_seconds > 0:
+        cfg["hf_generate_timeout_seconds"] = float(args.hf_generate_timeout_seconds)
     return cfg
 
 
@@ -186,6 +192,8 @@ async def run_one(
     longbench_prompt_dir: str,
     manager_max_turns: int,
     manager_max_history: int,
+    manager_list_objects_timeout_seconds: float,
+    manager_policy_chat_timeout_seconds: float,
     default_child_program: str,
     manager_system_prompt: str,
     manager_finalize_system_prompt: str,
@@ -250,6 +258,8 @@ async def run_one(
             "policy_config": policy_config,
             "manager_max_turns": max(1, int(manager_max_turns)),
             "manager_max_history": max(1, int(manager_max_history)),
+            "manager_list_objects_timeout_seconds": max(0.1, float(manager_list_objects_timeout_seconds)),
+            "manager_policy_chat_timeout_seconds": max(0.1, float(manager_policy_chat_timeout_seconds)),
             "default_child_program": default_child_program,
             "prompt_style": prompt_style,
             "longbench_prompt_dir": longbench_prompt_dir,
@@ -390,6 +400,8 @@ async def main() -> None:
 
     parser.add_argument("--manager-max-turns", type=int, default=56)
     parser.add_argument("--manager-max-history", type=int, default=10)
+    parser.add_argument("--manager-list-objects-timeout-seconds", type=float, default=20.0, help="Timeout for manager list_objects stage")
+    parser.add_argument("--manager-policy-chat-timeout-seconds", type=float, default=120.0, help="Timeout for each manager policy chat call")
     parser.add_argument("--default-child-program", type=str, default="llm_managed_child")
     parser.add_argument("--manager-system-prompt-file", type=str, default="")
     parser.add_argument("--manager-finalize-system-prompt-file", type=str, default="")
@@ -405,6 +417,9 @@ async def main() -> None:
     parser.add_argument("--hf-device-map", type=str, default="auto", help="HuggingFace device_map")
     parser.add_argument("--hf-torch-dtype", type=str, default="auto", help="HuggingFace torch_dtype")
     parser.add_argument("--hf-max-new-tokens", type=int, default=256, help="HuggingFace max generation tokens")
+    parser.add_argument("--hf-chat-timeout-seconds", type=float, default=120.0, help="HF policy total chat timeout (kept for backward compatibility)")
+    parser.add_argument("--hf-load-timeout-seconds", type=float, default=1800.0, help="HF model/pipeline load timeout")
+    parser.add_argument("--hf-generate-timeout-seconds", type=float, default=120.0, help="HF generation timeout per chat call")
 
     parser.add_argument("--legacy-mcp", action="store_true", help="Use legacy JSON-RPC transport instead of official MCP SDK")
     parser.add_argument("--require-official-mcp-sdk", action="store_true", help="Fail fast if official MCP SDK cannot be used")
@@ -492,6 +507,8 @@ async def main() -> None:
                     longbench_prompt_dir=args.longbench_prompt_dir,
                     manager_max_turns=args.manager_max_turns,
                     manager_max_history=args.manager_max_history,
+                    manager_list_objects_timeout_seconds=args.manager_list_objects_timeout_seconds,
+                    manager_policy_chat_timeout_seconds=args.manager_policy_chat_timeout_seconds,
                     default_child_program=args.default_child_program,
                     manager_system_prompt=manager_system_prompt,
                     manager_finalize_system_prompt=manager_finalize_system_prompt,

@@ -59,6 +59,14 @@ _DEFAULT_FINALIZE_SYSTEM_PROMPT = (
 )
 
 
+def _merge_system_prompt(default_prompt: str, task_prompt: str, *, section_title: str) -> str:
+    task = str(task_prompt or "").strip()
+    if not task:
+        return default_prompt
+    if task == default_prompt:
+        return default_prompt
+    return default_prompt + "\n\n" + section_title + "\n" + task
+
 def _to_bool(raw: Any, *, default: bool = False) -> bool:
     if isinstance(raw, bool):
         return raw
@@ -690,8 +698,16 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
     max_history = max(1, int(ctx.input_payload.get("manager_max_history", 8)))
     default_child_program = str(ctx.input_payload.get("default_child_program", "llm_managed_child")).strip() or "llm_managed_child"
 
-    manager_system_prompt = str(ctx.input_payload.get("manager_system_prompt", _DEFAULT_MANAGER_SYSTEM_PROMPT))
-    finalize_system_prompt = str(ctx.input_payload.get("manager_finalize_system_prompt", _DEFAULT_FINALIZE_SYSTEM_PROMPT))
+    manager_system_prompt = _merge_system_prompt(
+        _DEFAULT_MANAGER_SYSTEM_PROMPT,
+        str(ctx.input_payload.get("manager_system_prompt", "")),
+        section_title="Task-specific policy:",
+    )
+    finalize_system_prompt = _merge_system_prompt(
+        _DEFAULT_FINALIZE_SYSTEM_PROMPT,
+        str(ctx.input_payload.get("manager_finalize_system_prompt", "")),
+        section_title="Task-specific finalize policy:",
+    )
     stage_log_enabled = _to_bool(
         ctx.input_payload.get("manager_debug_stage_logs"),
         default=_to_bool(os.getenv("MCP_RLM_DEBUG_STAGE_LOGS"), default=True),
@@ -861,3 +877,4 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
 def register_llm_manager_programs(registry: "ProgramRegistry") -> None:
     registry.register("llm_managed_root", llm_managed_group_program)
     registry.register("llm_managed_child", llm_managed_group_program)
+

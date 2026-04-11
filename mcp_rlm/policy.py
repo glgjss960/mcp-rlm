@@ -242,6 +242,8 @@ class TransformersLocalPolicy(BasePolicy):
         torch_dtype: str = "auto",
         max_new_tokens: int = 256,
         chat_timeout_seconds: float = 120.0,
+        load_timeout_seconds: float = 1800.0,
+        generate_timeout_seconds: float = 120.0,
         stage_log_enabled: bool = True,
         fallback: Optional[BasePolicy] = None,
     ) -> None:
@@ -251,6 +253,15 @@ class TransformersLocalPolicy(BasePolicy):
         self.torch_dtype = torch_dtype
         self.max_new_tokens = max_new_tokens
         self.chat_timeout_seconds = _to_timeout(chat_timeout_seconds, default=120.0)
+        self.load_timeout_seconds = _to_timeout(
+            load_timeout_seconds,
+            default=max(600.0, self.chat_timeout_seconds),
+            low=1.0,
+        )
+        self.generate_timeout_seconds = _to_timeout(
+            generate_timeout_seconds,
+            default=self.chat_timeout_seconds,
+        )
         self.stage_log_enabled = bool(stage_log_enabled)
         self.fallback = fallback or HeuristicPolicy()
 
@@ -321,38 +332,6 @@ class TransformersLocalPolicy(BasePolicy):
             return await self.fallback.finalize_answer(query=query, merged=merged, facts=facts)
 
     async def _chat_json(self, *, system: str, user: str) -> Dict[str, Any]:
-        await self._ensure_loaded()
-        messages = [
-            {"role": "system", "content": system + " Return ONLY valid JSON object."},
-            {"role": "user", "content": user},
-        ]
-
-        def _infer() -> Dict[str, Any]:
-            if self._pipeline is None:
-                raise RuntimeError("Transformers pipeline is not initialized")
-
-            prompt = self._chat_prompt_from_messages(messages)
-            try:
-                outputs = self._pipeline(
-                    prompt,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,
-                    temperature=0.0,
-                    return_full_text=False,
-                )
-            except TypeError:
-                outputs = self._pipeline(
-                    prompt,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,
-                    temperature=0.0,
-                )
-            if not outputs:
-                raise RuntimeError("Empty generation output")
-            first = outputs[0]
-            text = self._extract_generation_text(first, prompt=prompt)
-            return _extract_json_object(text)
-
         start = perf_counter()
         _stage_log(
             enabled=self.stage_log_enabled,
@@ -361,33 +340,190 @@ class TransformersLocalPolicy(BasePolicy):
             status="start",
             detail={
                 "model": self.model,
-                "timeout_seconds": self.chat_timeout_seconds,
+                "chat_timeout_seconds": self.chat_timeout_seconds,
+                "load_timeout_seconds": self.load_timeout_seconds,
+                "generate_timeout_seconds": self.generate_timeout_seconds,
                 "user_chars": len(user),
                 "system_chars": len(system),
             },
         )
+
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_infer),
-                timeout=self.chat_timeout_seconds,
-            )
-        except asyncio.TimeoutError as exc:
-            elapsed_ms = int((perf_counter() - start) * 1000)
             _stage_log(
                 enabled=self.stage_log_enabled,
                 component="policy.hf",
-                stage="chat_json",
-                status="timeout",
-                elapsed_ms=elapsed_ms,
+                stage="chat_json.ensure_loaded",
+                status="start",
+                detail={"model": self.model, "timeout_seconds": self.load_timeout_seconds},
+            )
+            load_start = perf_counter()
+            try:
+                await asyncio.wait_for(
+                    self._ensure_loaded(),
+                    timeout=self.load_timeout_seconds,
+                )
+            except asyncio.TimeoutError as exc:
+                _stage_log(
+                    enabled=self.stage_log_enabled,
+                    component="policy.hf",
+                    stage="chat_json.ensure_loaded",
+                    status="timeout",
+                    elapsed_ms=int((perf_counter() - load_start) * 1000),
+                    detail={"model": self.model, "timeout_seconds": self.load_timeout_seconds},
+                )
+                raise RuntimeError(
+                    f"HF ensure_loaded timed out after {self.load_timeout_seconds:.1f}s for model={self.model}"
+                ) from exc
+            except Exception as exc:
+                _stage_log(
+                    enabled=self.stage_log_enabled,
+                    component="policy.hf",
+                    stage="chat_json.ensure_loaded",
+                    status="error",
+                    elapsed_ms=int((perf_counter() - load_start) * 1000),
+                    detail={"model": self.model, "error": str(exc), "error_type": type(exc).__name__},
+                )
+                raise
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.ensure_loaded",
+                status="ok",
+                elapsed_ms=int((perf_counter() - load_start) * 1000),
+                detail={"model": self.model},
+            )
+
+            messages = [
+                {"role": "system", "content": system + " Return ONLY valid JSON object."},
+                {"role": "user", "content": user},
+            ]
+
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.render_prompt",
+                status="start",
+                detail={"model": self.model},
+            )
+            render_start = perf_counter()
+            prompt = await asyncio.to_thread(self._chat_prompt_from_messages, messages)
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.render_prompt",
+                status="ok",
+                elapsed_ms=int((perf_counter() - render_start) * 1000),
+                detail={"model": self.model, "prompt_chars": len(prompt)},
+            )
+
+            def _generate_text(rendered_prompt: str) -> str:
+                if self._pipeline is None:
+                    raise RuntimeError("Transformers pipeline is not initialized")
+                try:
+                    outputs = self._pipeline(
+                        rendered_prompt,
+                        max_new_tokens=self.max_new_tokens,
+                        do_sample=False,
+                        temperature=0.0,
+                        return_full_text=False,
+                    )
+                except TypeError:
+                    outputs = self._pipeline(
+                        rendered_prompt,
+                        max_new_tokens=self.max_new_tokens,
+                        do_sample=False,
+                        temperature=0.0,
+                    )
+                if not outputs:
+                    raise RuntimeError("Empty generation output")
+                first = outputs[0]
+                return self._extract_generation_text(first, prompt=rendered_prompt)
+
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.generate",
+                status="start",
                 detail={
                     "model": self.model,
-                    "timeout_seconds": self.chat_timeout_seconds,
-                    "note": "to_thread task may continue in background until generation returns",
+                    "timeout_seconds": self.generate_timeout_seconds,
+                    "max_new_tokens": self.max_new_tokens,
                 },
             )
-            raise RuntimeError(
-                f"HF chat_json timed out after {self.chat_timeout_seconds:.1f}s for model={self.model}"
-            ) from exc
+            generate_start = perf_counter()
+            try:
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(_generate_text, prompt),
+                    timeout=self.generate_timeout_seconds,
+                )
+            except asyncio.TimeoutError as exc:
+                _stage_log(
+                    enabled=self.stage_log_enabled,
+                    component="policy.hf",
+                    stage="chat_json.generate",
+                    status="timeout",
+                    elapsed_ms=int((perf_counter() - generate_start) * 1000),
+                    detail={
+                        "model": self.model,
+                        "timeout_seconds": self.generate_timeout_seconds,
+                        "note": "to_thread task may continue in background until generation returns",
+                    },
+                )
+                raise RuntimeError(
+                    f"HF generate timed out after {self.generate_timeout_seconds:.1f}s for model={self.model}"
+                ) from exc
+            except Exception as exc:
+                _stage_log(
+                    enabled=self.stage_log_enabled,
+                    component="policy.hf",
+                    stage="chat_json.generate",
+                    status="error",
+                    elapsed_ms=int((perf_counter() - generate_start) * 1000),
+                    detail={"model": self.model, "error": str(exc), "error_type": type(exc).__name__},
+                )
+                raise
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.generate",
+                status="ok",
+                elapsed_ms=int((perf_counter() - generate_start) * 1000),
+                detail={"model": self.model, "text_chars": len(text)},
+            )
+
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.parse_json",
+                status="start",
+                detail={"model": self.model},
+            )
+            parse_start = perf_counter()
+            try:
+                result = _extract_json_object(text)
+            except Exception as exc:
+                _stage_log(
+                    enabled=self.stage_log_enabled,
+                    component="policy.hf",
+                    stage="chat_json.parse_json",
+                    status="error",
+                    elapsed_ms=int((perf_counter() - parse_start) * 1000),
+                    detail={
+                        "model": self.model,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "text_preview": str(text)[:400],
+                    },
+                )
+                raise
+            _stage_log(
+                enabled=self.stage_log_enabled,
+                component="policy.hf",
+                stage="chat_json.parse_json",
+                status="ok",
+                elapsed_ms=int((perf_counter() - parse_start) * 1000),
+                detail={"model": self.model},
+            )
         except Exception as exc:
             elapsed_ms = int((perf_counter() - start) * 1000)
             _stage_log(
@@ -396,7 +532,11 @@ class TransformersLocalPolicy(BasePolicy):
                 stage="chat_json",
                 status="error",
                 elapsed_ms=elapsed_ms,
-                detail={"model": self.model, "error": str(exc), "error_type": type(exc).__name__},
+                detail={
+                    "model": self.model,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
             )
             raise
 
@@ -439,7 +579,6 @@ class TransformersLocalPolicy(BasePolicy):
             + str(messages[1].get("content", ""))
             + "\n\nAssistant:\n"
         )
-
     @staticmethod
     def _extract_generation_text(first: Any, *, prompt: str) -> str:
         if isinstance(first, dict):
@@ -467,6 +606,7 @@ class TransformersLocalPolicy(BasePolicy):
         if text.startswith(prompt):
             return text[len(prompt) :]
         return text
+
     async def _ensure_loaded(self) -> None:
         if self._pipeline is not None:
             return
@@ -512,6 +652,8 @@ def _normalize_policy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]
         "hf_torch_dtype": os.getenv("MCP_RLM_HF_TORCH_DTYPE", "auto").strip() or "auto",
         "hf_max_new_tokens": os.getenv("MCP_RLM_HF_MAX_NEW_TOKENS", "").strip(),
         "hf_chat_timeout_seconds": os.getenv("MCP_RLM_HF_CHAT_TIMEOUT_SECONDS", "120").strip(),
+        "hf_load_timeout_seconds": os.getenv("MCP_RLM_HF_LOAD_TIMEOUT_SECONDS", "1800").strip(),
+        "hf_generate_timeout_seconds": os.getenv("MCP_RLM_HF_GENERATE_TIMEOUT_SECONDS", "120").strip(),
         "hf_stage_logs": os.getenv("MCP_RLM_DEBUG_STAGE_LOGS", "1").strip(),
     }
     if config:
@@ -579,6 +721,10 @@ def build_policy_from_config(config: Optional[Dict[str, Any]] = None) -> BasePol
         if not model:
             policy = fallback
         else:
+            chat_timeout_seconds = _to_timeout(
+                resolved.get("hf_chat_timeout_seconds"),
+                default=120.0,
+            )
             policy = TransformersLocalPolicy(
                 model=model,
                 revision=str(resolved.get("hf_revision", "")).strip() or None,
@@ -590,9 +736,14 @@ def build_policy_from_config(config: Optional[Dict[str, Any]] = None) -> BasePol
                     high=2048,
                     default=256,
                 ),
-                chat_timeout_seconds=_to_timeout(
-                    resolved.get("hf_chat_timeout_seconds"),
-                    default=120.0,
+                chat_timeout_seconds=chat_timeout_seconds,
+                load_timeout_seconds=_to_timeout(
+                    resolved.get("hf_load_timeout_seconds"),
+                    default=max(600.0, chat_timeout_seconds),
+                ),
+                generate_timeout_seconds=_to_timeout(
+                    resolved.get("hf_generate_timeout_seconds"),
+                    default=chat_timeout_seconds,
                 ),
                 stage_log_enabled=_to_bool(resolved.get("hf_stage_logs"), default=True),
                 fallback=fallback,
@@ -606,6 +757,7 @@ def build_policy_from_config(config: Optional[Dict[str, Any]] = None) -> BasePol
 
 def build_policy_from_env() -> BasePolicy:
     return build_policy_from_config(None)
+
 
 
 
