@@ -61,6 +61,11 @@ def build_policy_config(args: argparse.Namespace) -> dict[str, object]:
         cfg["hf_load_timeout_seconds"] = float(args.hf_load_timeout_seconds)
     if args.hf_generate_timeout_seconds > 0:
         cfg["hf_generate_timeout_seconds"] = float(args.hf_generate_timeout_seconds)
+    if args.request_timeout_seconds > 0:
+        cfg["request_timeout_seconds"] = float(args.request_timeout_seconds)
+    cfg["hf_use_worker_process"] = bool(args.hf_use_worker_process)
+    if args.hf_worker_module:
+        cfg["hf_worker_module"] = args.hf_worker_module
     return cfg
 
 
@@ -194,6 +199,15 @@ async def run_one(
     manager_max_history: int,
     manager_list_objects_timeout_seconds: float,
     manager_policy_chat_timeout_seconds: float,
+    manager_policy_mode: str,
+    manager_policy_model: str,
+    manager_policy_api_base: str,
+    manager_policy_api_key: str,
+    manager_action_max_new_tokens: int,
+    manager_finalize_max_new_tokens: int,
+    manager_json_mode: str,
+    manager_json_retry: int,
+    manager_json_repair: bool,
     default_child_program: str,
     manager_system_prompt: str,
     manager_finalize_system_prompt: str,
@@ -260,12 +274,25 @@ async def run_one(
             "manager_max_history": max(1, int(manager_max_history)),
             "manager_list_objects_timeout_seconds": max(0.1, float(manager_list_objects_timeout_seconds)),
             "manager_policy_chat_timeout_seconds": max(0.1, float(manager_policy_chat_timeout_seconds)),
+            "manager_action_max_new_tokens": max(8, int(manager_action_max_new_tokens)),
+            "manager_finalize_max_new_tokens": max(8, int(manager_finalize_max_new_tokens)),
+            "manager_json_mode": str(manager_json_mode).strip().lower(),
+            "manager_json_retry": max(0, int(manager_json_retry)),
+            "manager_json_repair": bool(manager_json_repair),
             "default_child_program": default_child_program,
             "prompt_style": prompt_style,
             "longbench_prompt_dir": longbench_prompt_dir,
             "root_extra_object_fanout": root_extra_object_fanout,
             "leaf_extra_object_fanout": leaf_extra_object_fanout,
         }
+        if manager_policy_mode.strip():
+            payload["manager_policy_mode"] = manager_policy_mode.strip()
+        if manager_policy_model.strip():
+            payload["manager_policy_model"] = manager_policy_model.strip()
+        if manager_policy_api_base.strip():
+            payload["manager_policy_api_base"] = manager_policy_api_base.strip()
+        if manager_policy_api_key.strip():
+            payload["manager_policy_api_key"] = manager_policy_api_key.strip()
         if manager_system_prompt.strip():
             payload["manager_system_prompt"] = manager_system_prompt
         if manager_finalize_system_prompt.strip():
@@ -402,6 +429,15 @@ async def main() -> None:
     parser.add_argument("--manager-max-history", type=int, default=10)
     parser.add_argument("--manager-list-objects-timeout-seconds", type=float, default=20.0, help="Timeout for manager list_objects stage")
     parser.add_argument("--manager-policy-chat-timeout-seconds", type=float, default=120.0, help="Timeout for each manager policy chat call")
+    parser.add_argument("--manager-policy-mode", type=str, default="", help="Optional manager-only policy mode override")
+    parser.add_argument("--manager-policy-model", type=str, default="", help="Optional manager-only model override")
+    parser.add_argument("--manager-policy-api-base", type=str, default="", help="Optional manager-only OpenAI-compatible API base")
+    parser.add_argument("--manager-policy-api-key", type=str, default="", help="Optional manager-only API key override")
+    parser.add_argument("--manager-action-max-new-tokens", type=int, default=96, help="Max new tokens for each manager action turn")
+    parser.add_argument("--manager-finalize-max-new-tokens", type=int, default=160, help="Max new tokens for manager finalize call")
+    parser.add_argument("--manager-json-mode", type=str, default="json_object", choices=["none", "json_object", "json_schema"], help="JSON constraint mode for manager calls")
+    parser.add_argument("--manager-json-retry", type=int, default=1, help="Retries for manager JSON parse/generation errors")
+    parser.add_argument("--manager-json-repair", action=argparse.BooleanOptionalAction, default=True, help="Enable JSON repair fallback for manager outputs")
     parser.add_argument("--default-child-program", type=str, default="llm_managed_child")
     parser.add_argument("--manager-system-prompt-file", type=str, default="")
     parser.add_argument("--manager-finalize-system-prompt-file", type=str, default="")
@@ -420,6 +456,9 @@ async def main() -> None:
     parser.add_argument("--hf-chat-timeout-seconds", type=float, default=120.0, help="HF policy total chat timeout (kept for backward compatibility)")
     parser.add_argument("--hf-load-timeout-seconds", type=float, default=1800.0, help="HF model/pipeline load timeout")
     parser.add_argument("--hf-generate-timeout-seconds", type=float, default=120.0, help="HF generation timeout per chat call")
+    parser.add_argument("--hf-use-worker-process", action=argparse.BooleanOptionalAction, default=True, help="Use subprocess worker for HF generation (recommended)")
+    parser.add_argument("--hf-worker-module", type=str, default="mcp_rlm.hf_worker", help="Worker module path for HF subprocess mode")
+    parser.add_argument("--request-timeout-seconds", type=float, default=25.0, help="HTTP timeout for OpenAI-compatible policy calls")
 
     parser.add_argument("--legacy-mcp", action="store_true", help="Use legacy JSON-RPC transport instead of official MCP SDK")
     parser.add_argument("--require-official-mcp-sdk", action="store_true", help="Fail fast if official MCP SDK cannot be used")
@@ -509,6 +548,15 @@ async def main() -> None:
                     manager_max_history=args.manager_max_history,
                     manager_list_objects_timeout_seconds=args.manager_list_objects_timeout_seconds,
                     manager_policy_chat_timeout_seconds=args.manager_policy_chat_timeout_seconds,
+                    manager_policy_mode=args.manager_policy_mode,
+                    manager_policy_model=args.manager_policy_model,
+                    manager_policy_api_base=args.manager_policy_api_base,
+                    manager_policy_api_key=args.manager_policy_api_key,
+                    manager_action_max_new_tokens=args.manager_action_max_new_tokens,
+                    manager_finalize_max_new_tokens=args.manager_finalize_max_new_tokens,
+                    manager_json_mode=args.manager_json_mode,
+                    manager_json_retry=args.manager_json_retry,
+                    manager_json_repair=bool(args.manager_json_repair),
                     default_child_program=args.default_child_program,
                     manager_system_prompt=manager_system_prompt,
                     manager_finalize_system_prompt=manager_finalize_system_prompt,

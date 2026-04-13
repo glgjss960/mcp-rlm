@@ -54,6 +54,17 @@ def build_policy_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["hf_torch_dtype"] = args.hf_torch_dtype
     if args.hf_max_new_tokens > 0:
         cfg["hf_max_new_tokens"] = args.hf_max_new_tokens
+    if args.hf_chat_timeout_seconds > 0:
+        cfg["hf_chat_timeout_seconds"] = float(args.hf_chat_timeout_seconds)
+    if args.hf_load_timeout_seconds > 0:
+        cfg["hf_load_timeout_seconds"] = float(args.hf_load_timeout_seconds)
+    if args.hf_generate_timeout_seconds > 0:
+        cfg["hf_generate_timeout_seconds"] = float(args.hf_generate_timeout_seconds)
+    if args.request_timeout_seconds > 0:
+        cfg["request_timeout_seconds"] = float(args.request_timeout_seconds)
+    cfg["hf_use_worker_process"] = bool(args.hf_use_worker_process)
+    if args.hf_worker_module:
+        cfg["hf_worker_module"] = args.hf_worker_module
     return cfg
 
 
@@ -193,6 +204,15 @@ async def run_one(
     program: str,
     manager_max_turns: int,
     manager_max_history: int,
+    manager_policy_mode: str,
+    manager_policy_model: str,
+    manager_policy_api_base: str,
+    manager_policy_api_key: str,
+    manager_action_max_new_tokens: int,
+    manager_finalize_max_new_tokens: int,
+    manager_json_mode: str,
+    manager_json_retry: int,
+    manager_json_repair: bool,
     default_child_program: str,
     manager_system_prompt: str,
     manager_finalize_system_prompt: str,
@@ -240,21 +260,36 @@ async def run_one(
     )
 
     try:
+        payload = {
+            "query": query,
+            "question": query,
+            "choices": choices,
+            "manifest_path": str(manifest_path),
+            "policy_config": dict(policy_config),
+            "manager_max_turns": manager_max_turns,
+            "manager_max_history": manager_max_history,
+            "manager_action_max_new_tokens": max(8, int(manager_action_max_new_tokens)),
+            "manager_finalize_max_new_tokens": max(8, int(manager_finalize_max_new_tokens)),
+            "manager_json_mode": str(manager_json_mode).strip().lower(),
+            "manager_json_retry": max(0, int(manager_json_retry)),
+            "manager_json_repair": bool(manager_json_repair),
+            "default_child_program": default_child_program,
+            "manager_system_prompt": manager_system_prompt,
+            "manager_finalize_system_prompt": manager_finalize_system_prompt,
+        }
+        if manager_policy_mode.strip():
+            payload["manager_policy_mode"] = manager_policy_mode.strip()
+        if manager_policy_model.strip():
+            payload["manager_policy_model"] = manager_policy_model.strip()
+        if manager_policy_api_base.strip():
+            payload["manager_policy_api_base"] = manager_policy_api_base.strip()
+        if manager_policy_api_key.strip():
+            payload["manager_policy_api_key"] = manager_policy_api_key.strip()
+
         trace = await runtime.run_episode(
             goal=query,
             program=program,
-            input_payload={
-                "query": query,
-                "question": query,
-                "choices": choices,
-                "manifest_path": str(manifest_path),
-                "policy_config": dict(policy_config),
-                "manager_max_turns": manager_max_turns,
-                "manager_max_history": manager_max_history,
-                "default_child_program": default_child_program,
-                "manager_system_prompt": manager_system_prompt,
-                "manager_finalize_system_prompt": manager_finalize_system_prompt,
-            },
+            input_payload=payload,
         )
     finally:
         await mcp_client.close()
@@ -336,6 +371,15 @@ async def main() -> None:
     parser.add_argument("--program", type=str, default="llm_managed_root")
     parser.add_argument("--manager-max-turns", type=int, default=48)
     parser.add_argument("--manager-max-history", type=int, default=8)
+    parser.add_argument("--manager-policy-mode", type=str, default="", help="Optional manager-only policy mode override")
+    parser.add_argument("--manager-policy-model", type=str, default="", help="Optional manager-only model override")
+    parser.add_argument("--manager-policy-api-base", type=str, default="", help="Optional manager-only OpenAI-compatible API base")
+    parser.add_argument("--manager-policy-api-key", type=str, default="", help="Optional manager-only API key override")
+    parser.add_argument("--manager-action-max-new-tokens", type=int, default=96)
+    parser.add_argument("--manager-finalize-max-new-tokens", type=int, default=160)
+    parser.add_argument("--manager-json-mode", type=str, default="json_object", choices=["none", "json_object", "json_schema"])
+    parser.add_argument("--manager-json-retry", type=int, default=1)
+    parser.add_argument("--manager-json-repair", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--default-child-program", type=str, default="llm_managed_child")
     parser.add_argument("--manager-system-prompt-file", type=str, default="")
     parser.add_argument("--manager-finalize-system-prompt-file", type=str, default="")
@@ -351,6 +395,12 @@ async def main() -> None:
     parser.add_argument("--hf-device-map", type=str, default="auto")
     parser.add_argument("--hf-torch-dtype", type=str, default="auto")
     parser.add_argument("--hf-max-new-tokens", type=int, default=256)
+    parser.add_argument("--hf-chat-timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--hf-load-timeout-seconds", type=float, default=1800.0)
+    parser.add_argument("--hf-generate-timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--hf-use-worker-process", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hf-worker-module", type=str, default="mcp_rlm.hf_worker")
+    parser.add_argument("--request-timeout-seconds", type=float, default=25.0)
 
     parser.add_argument("--legacy-mcp", action="store_true")
     parser.add_argument("--require-official-mcp-sdk", action="store_true")
@@ -435,6 +485,15 @@ async def main() -> None:
                     program=args.program,
                     manager_max_turns=max(1, int(args.manager_max_turns)),
                     manager_max_history=max(1, int(args.manager_max_history)),
+                    manager_policy_mode=args.manager_policy_mode,
+                    manager_policy_model=args.manager_policy_model,
+                    manager_policy_api_base=args.manager_policy_api_base,
+                    manager_policy_api_key=args.manager_policy_api_key,
+                    manager_action_max_new_tokens=args.manager_action_max_new_tokens,
+                    manager_finalize_max_new_tokens=args.manager_finalize_max_new_tokens,
+                    manager_json_mode=args.manager_json_mode,
+                    manager_json_retry=args.manager_json_retry,
+                    manager_json_repair=bool(args.manager_json_repair),
                     default_child_program=args.default_child_program,
                     manager_system_prompt=manager_system_prompt,
                     manager_finalize_system_prompt=manager_finalize_system_prompt,

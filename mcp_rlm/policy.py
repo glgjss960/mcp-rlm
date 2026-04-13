@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import asyncio
 import json
 import os
+import re
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -56,12 +57,37 @@ def _stage_log(
     print("[mcp-rlm-stage] " + json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
-def _extract_json_object(text: str) -> Dict[str, Any]:
+def _extract_json_candidate(text: str) -> str:
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end < 0 or end <= start:
         raise ValueError("No JSON object found in model output")
-    return json.loads(text[start : end + 1])
+    return text[start : end + 1]
+
+
+def _repair_json_text(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return text
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = _extract_json_candidate(text)
+    # Remove trailing commas before } or ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    return text
+
+
+def _extract_json_object(text: str, *, allow_repair: bool = False) -> Dict[str, Any]:
+    candidate = _extract_json_candidate(text)
+    try:
+        parsed = json.loads(candidate)
+    except Exception:
+        if not allow_repair:
+            raise
+        parsed = json.loads(_repair_json_text(candidate))
+    if not isinstance(parsed, dict):
+        raise ValueError("JSON root must be object")
+    return parsed
 
 
 @dataclass
@@ -198,7 +224,16 @@ class OpenAICompatiblePolicy(BasePolicy):
         except Exception:
             return await self.fallback.finalize_answer(query=query, merged=merged, facts=facts)
 
-    async def _chat_json(self, *, system: str, user: str) -> Dict[str, Any]:
+    async def _chat_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_new_tokens: Optional[int] = None,
+        json_mode: str = "none",
+        json_schema: Optional[Dict[str, Any]] = None,
+        json_repair: bool = False,
+    ) -> Dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": [
@@ -207,9 +242,23 @@ class OpenAICompatiblePolicy(BasePolicy):
             ],
             "temperature": 0.0,
         }
+        if max_new_tokens is not None:
+            payload["max_tokens"] = max(8, int(max_new_tokens))
 
-        def _request() -> Dict[str, Any]:
-            data = json.dumps(payload).encode("utf-8")
+        normalized_mode = str(json_mode or "none").strip().lower()
+        if normalized_mode == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+        elif normalized_mode == "json_schema":
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "mcp_rlm_response",
+                    "schema": json_schema if isinstance(json_schema, dict) else {"type": "object"},
+                },
+            }
+
+        def _request(payload_obj: Dict[str, Any]) -> Dict[str, Any]:
+            data = json.dumps(payload_obj).encode("utf-8")
             headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
@@ -225,9 +274,26 @@ class OpenAICompatiblePolicy(BasePolicy):
                 body = resp.read().decode("utf-8")
             raw = json.loads(body)
             content = raw["choices"][0]["message"]["content"]
-            return _extract_json_object(content)
-
-        return await asyncio.to_thread(_request)
+            if isinstance(content, list):
+                parts: List[str] = []
+                for item in content:
+                    if isinstance(item, dict):
+                        text = item.get("text")
+                        if text is not None:
+                            parts.append(str(text))
+                    elif item is not None:
+                        parts.append(str(item))
+                content = "".join(parts)
+            return _extract_json_object(content, allow_repair=json_repair)
+        try:
+            return await asyncio.to_thread(_request, payload)
+        except Exception:
+            # Some OpenAI-compatible providers reject response_format=json_schema/json_object.
+            if "response_format" in payload:
+                fallback_payload = dict(payload)
+                fallback_payload.pop("response_format", None)
+                return await asyncio.to_thread(_request, fallback_payload)
+            raise
 
 
 class TransformersLocalPolicy(BasePolicy):
@@ -245,6 +311,8 @@ class TransformersLocalPolicy(BasePolicy):
         load_timeout_seconds: float = 1800.0,
         generate_timeout_seconds: float = 120.0,
         stage_log_enabled: bool = True,
+        use_worker_process: bool = True,
+        worker_module: str = "mcp_rlm.hf_worker",
         fallback: Optional[BasePolicy] = None,
     ) -> None:
         self.model = model
@@ -263,10 +331,16 @@ class TransformersLocalPolicy(BasePolicy):
             default=self.chat_timeout_seconds,
         )
         self.stage_log_enabled = bool(stage_log_enabled)
+        self.use_worker_process = bool(use_worker_process)
+        self.worker_module = str(worker_module or "mcp_rlm.hf_worker").strip() or "mcp_rlm.hf_worker"
         self.fallback = fallback or HeuristicPolicy()
 
         self._pipeline: Any = None
         self._load_lock = asyncio.Lock()
+        self._worker_proc: Optional[asyncio.subprocess.Process] = None
+        self._worker_lock = asyncio.Lock()
+        self._worker_stderr_task: Optional[asyncio.Task[Any]] = None
+        self._worker_seq = 0
 
     async def plan_root(self, *, query: str, context_stats: Dict[str, Any]) -> SearchPlan:
         prompt = {
@@ -331,7 +405,16 @@ class TransformersLocalPolicy(BasePolicy):
         except Exception:
             return await self.fallback.finalize_answer(query=query, merged=merged, facts=facts)
 
-    async def _chat_json(self, *, system: str, user: str) -> Dict[str, Any]:
+    async def _chat_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_new_tokens: Optional[int] = None,
+        json_mode: str = "none",
+        json_schema: Optional[Dict[str, Any]] = None,
+        json_repair: bool = False,
+    ) -> Dict[str, Any]:
         start = perf_counter()
         _stage_log(
             enabled=self.stage_log_enabled,
@@ -345,6 +428,7 @@ class TransformersLocalPolicy(BasePolicy):
                 "generate_timeout_seconds": self.generate_timeout_seconds,
                 "user_chars": len(user),
                 "system_chars": len(system),
+                "json_mode": str(json_mode or "none"),
             },
         )
 
@@ -393,52 +477,7 @@ class TransformersLocalPolicy(BasePolicy):
                 detail={"model": self.model},
             )
 
-            messages = [
-                {"role": "system", "content": system + " Return ONLY valid JSON object."},
-                {"role": "user", "content": user},
-            ]
-
-            _stage_log(
-                enabled=self.stage_log_enabled,
-                component="policy.hf",
-                stage="chat_json.render_prompt",
-                status="start",
-                detail={"model": self.model},
-            )
-            render_start = perf_counter()
-            prompt = await asyncio.to_thread(self._chat_prompt_from_messages, messages)
-            _stage_log(
-                enabled=self.stage_log_enabled,
-                component="policy.hf",
-                stage="chat_json.render_prompt",
-                status="ok",
-                elapsed_ms=int((perf_counter() - render_start) * 1000),
-                detail={"model": self.model, "prompt_chars": len(prompt)},
-            )
-
-            def _generate_text(rendered_prompt: str) -> str:
-                if self._pipeline is None:
-                    raise RuntimeError("Transformers pipeline is not initialized")
-                try:
-                    outputs = self._pipeline(
-                        rendered_prompt,
-                        max_new_tokens=self.max_new_tokens,
-                        do_sample=False,
-                        temperature=0.0,
-                        return_full_text=False,
-                    )
-                except TypeError:
-                    outputs = self._pipeline(
-                        rendered_prompt,
-                        max_new_tokens=self.max_new_tokens,
-                        do_sample=False,
-                        temperature=0.0,
-                    )
-                if not outputs:
-                    raise RuntimeError("Empty generation output")
-                first = outputs[0]
-                return self._extract_generation_text(first, prompt=rendered_prompt)
-
+            generation_tokens = max(8, int(max_new_tokens if max_new_tokens is not None else self.max_new_tokens))
             _stage_log(
                 enabled=self.stage_log_enabled,
                 component="policy.hf",
@@ -447,15 +486,70 @@ class TransformersLocalPolicy(BasePolicy):
                 detail={
                     "model": self.model,
                     "timeout_seconds": self.generate_timeout_seconds,
-                    "max_new_tokens": self.max_new_tokens,
+                    "max_new_tokens": generation_tokens,
+                    "use_worker_process": self.use_worker_process,
                 },
             )
             generate_start = perf_counter()
             try:
-                text = await asyncio.wait_for(
-                    asyncio.to_thread(_generate_text, prompt),
-                    timeout=self.generate_timeout_seconds,
-                )
+                if self.use_worker_process:
+                    text = await self._generate_with_worker(
+                        system=system,
+                        user=user,
+                        max_new_tokens=generation_tokens,
+                        json_mode=json_mode,
+                        json_schema=json_schema,
+                    )
+                else:
+                    messages = [
+                        {"role": "system", "content": system + " Return ONLY valid JSON object."},
+                        {"role": "user", "content": user},
+                    ]
+                    _stage_log(
+                        enabled=self.stage_log_enabled,
+                        component="policy.hf",
+                        stage="chat_json.render_prompt",
+                        status="start",
+                        detail={"model": self.model},
+                    )
+                    render_start = perf_counter()
+                    prompt = await asyncio.to_thread(self._chat_prompt_from_messages, messages)
+                    _stage_log(
+                        enabled=self.stage_log_enabled,
+                        component="policy.hf",
+                        stage="chat_json.render_prompt",
+                        status="ok",
+                        elapsed_ms=int((perf_counter() - render_start) * 1000),
+                        detail={"model": self.model, "prompt_chars": len(prompt)},
+                    )
+
+                    def _generate_text(rendered_prompt: str) -> str:
+                        if self._pipeline is None:
+                            raise RuntimeError("Transformers pipeline is not initialized")
+                        try:
+                            outputs = self._pipeline(
+                                rendered_prompt,
+                                max_new_tokens=generation_tokens,
+                                do_sample=False,
+                                temperature=0.0,
+                                return_full_text=False,
+                            )
+                        except TypeError:
+                            outputs = self._pipeline(
+                                rendered_prompt,
+                                max_new_tokens=generation_tokens,
+                                do_sample=False,
+                                temperature=0.0,
+                            )
+                        if not outputs:
+                            raise RuntimeError("Empty generation output")
+                        first = outputs[0]
+                        return self._extract_generation_text(first, prompt=rendered_prompt)
+
+                    text = await asyncio.wait_for(
+                        asyncio.to_thread(_generate_text, prompt),
+                        timeout=self.generate_timeout_seconds,
+                    )
             except asyncio.TimeoutError as exc:
                 _stage_log(
                     enabled=self.stage_log_enabled,
@@ -466,7 +560,11 @@ class TransformersLocalPolicy(BasePolicy):
                     detail={
                         "model": self.model,
                         "timeout_seconds": self.generate_timeout_seconds,
-                        "note": "to_thread task may continue in background until generation returns",
+                        "note": (
+                            "subprocess worker restarted after timeout"
+                            if self.use_worker_process
+                            else "to_thread task may continue in background until generation returns"
+                        ),
                     },
                 )
                 raise RuntimeError(
@@ -500,7 +598,7 @@ class TransformersLocalPolicy(BasePolicy):
             )
             parse_start = perf_counter()
             try:
-                result = _extract_json_object(text)
+                result = _extract_json_object(text, allow_repair=json_repair)
             except Exception as exc:
                 _stage_log(
                     enabled=self.stage_log_enabled,
@@ -608,6 +706,15 @@ class TransformersLocalPolicy(BasePolicy):
         return text
 
     async def _ensure_loaded(self) -> None:
+        if self.use_worker_process:
+            if self._worker_proc is not None and self._worker_proc.returncode is None:
+                return
+            async with self._load_lock:
+                if self._worker_proc is not None and self._worker_proc.returncode is None:
+                    return
+                await self._start_worker()
+            return
+
         if self._pipeline is not None:
             return
 
@@ -638,6 +745,161 @@ class TransformersLocalPolicy(BasePolicy):
 
             self._pipeline = await asyncio.to_thread(_load)
 
+    async def _start_worker(self) -> None:
+        await self._stop_worker()
+        cmd = [sys.executable, "-m", self.worker_module, "--model", self.model]
+        if self.revision:
+            cmd.extend(["--revision", self.revision])
+        if self.device_map:
+            cmd.extend(["--device-map", self.device_map])
+        if self.torch_dtype:
+            cmd.extend(["--torch-dtype", self.torch_dtype])
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self._worker_proc = proc
+        if proc.stderr is not None:
+            self._worker_stderr_task = asyncio.create_task(self._drain_worker_stderr(proc))
+
+        if proc.stdout is None:
+            await self._stop_worker()
+            raise RuntimeError("HF worker failed to create stdout pipe")
+
+        try:
+            ready_raw = await asyncio.wait_for(proc.stdout.readline(), timeout=self.load_timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            await self._stop_worker()
+            raise RuntimeError(
+                f"HF ensure_loaded timed out after {self.load_timeout_seconds:.1f}s for model={self.model}"
+            ) from exc
+        if not ready_raw:
+            await self._stop_worker()
+            raise RuntimeError("HF worker exited before ready handshake")
+        try:
+            ready = json.loads(ready_raw.decode("utf-8", errors="replace"))
+        except Exception as exc:
+            await self._stop_worker()
+            raise RuntimeError(f"HF worker ready parse failed: {exc}") from exc
+        if not bool(ready.get("ok", False)):
+            error = str(ready.get("error", "unknown startup error"))
+            await self._stop_worker()
+            raise RuntimeError(f"HF worker startup failed: {error}")
+
+    async def _stop_worker(self) -> None:
+        proc = self._worker_proc
+        self._worker_proc = None
+        stderr_task = self._worker_stderr_task
+        self._worker_stderr_task = None
+        if stderr_task is not None:
+            stderr_task.cancel()
+        if proc is None:
+            return
+        try:
+            if proc.returncode is None and proc.stdin is not None:
+                try:
+                    proc.stdin.write((json.dumps({"type": "shutdown"}) + "\n").encode("utf-8"))
+                    await proc.stdin.drain()
+                except Exception:
+                    pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            except Exception:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=1.0)
+                    except Exception:
+                        proc.kill()
+                        await proc.wait()
+        except Exception:
+            return
+
+    async def _restart_worker(self) -> None:
+        await self._stop_worker()
+        await self._start_worker()
+
+    async def _drain_worker_stderr(self, proc: asyncio.subprocess.Process) -> None:
+        if proc.stderr is None:
+            return
+        try:
+            while True:
+                raw = await proc.stderr.readline()
+                if not raw:
+                    return
+                _stage_log(
+                    enabled=self.stage_log_enabled,
+                    component="policy.hf",
+                    stage="worker.stderr",
+                    status="line",
+                    detail={"line": raw.decode("utf-8", errors="replace").strip()[:1000]},
+                )
+        except Exception:
+            return
+
+    async def _generate_with_worker(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_new_tokens: int,
+        json_mode: str,
+        json_schema: Optional[Dict[str, Any]],
+    ) -> str:
+        async with self._worker_lock:
+            await self._ensure_loaded()
+            proc = self._worker_proc
+            if proc is None or proc.stdin is None or proc.stdout is None:
+                raise RuntimeError("HF worker is not available")
+            self._worker_seq += 1
+            req_id = f"req_{self._worker_seq}"
+            req = {
+                "id": req_id,
+                "type": "chat_json",
+                "system": system,
+                "user": user,
+                "max_new_tokens": max_new_tokens,
+                "json_mode": str(json_mode or "none"),
+                "json_schema": json_schema if isinstance(json_schema, dict) else None,
+            }
+            try:
+                proc.stdin.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
+                await asyncio.wait_for(proc.stdin.drain(), timeout=3.0)
+            except Exception as exc:
+                await self._restart_worker()
+                raise RuntimeError(f"HF worker write failed: {exc}") from exc
+
+            try:
+                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=self.generate_timeout_seconds)
+            except asyncio.TimeoutError as exc:
+                await self._restart_worker()
+                raise RuntimeError(
+                    f"HF generate timed out after {self.generate_timeout_seconds:.1f}s for model={self.model}"
+                ) from exc
+            except Exception as exc:
+                await self._restart_worker()
+                raise RuntimeError(f"HF worker read failed: {exc}") from exc
+            if not raw:
+                await self._restart_worker()
+                raise RuntimeError("HF worker exited during generation")
+
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception as exc:
+                await self._restart_worker()
+                raise RuntimeError(f"HF worker response parse failed: {exc}") from exc
+
+            if str(payload.get("id", "")) != req_id:
+                await self._restart_worker()
+                raise RuntimeError("HF worker response id mismatch")
+
+            if not bool(payload.get("ok", False)):
+                raise RuntimeError(str(payload.get("error", "HF worker generation failed")))
+            return str(payload.get("text", ""))
+
 
 def _normalize_policy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged: Dict[str, Any] = {
@@ -655,6 +917,9 @@ def _normalize_policy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]
         "hf_load_timeout_seconds": os.getenv("MCP_RLM_HF_LOAD_TIMEOUT_SECONDS", "1800").strip(),
         "hf_generate_timeout_seconds": os.getenv("MCP_RLM_HF_GENERATE_TIMEOUT_SECONDS", "120").strip(),
         "hf_stage_logs": os.getenv("MCP_RLM_DEBUG_STAGE_LOGS", "1").strip(),
+        "hf_use_worker_process": os.getenv("MCP_RLM_HF_USE_WORKER_PROCESS", "1").strip(),
+        "hf_worker_module": os.getenv("MCP_RLM_HF_WORKER_MODULE", "mcp_rlm.hf_worker").strip(),
+        "request_timeout_seconds": os.getenv("MCP_RLM_REQUEST_TIMEOUT_SECONDS", "25").strip(),
     }
     if config:
         for key, value in config.items():
@@ -714,6 +979,10 @@ def build_policy_from_config(config: Optional[Dict[str, Any]] = None) -> BasePol
                 model=model,
                 api_key=api_key,
                 extra_headers=headers,
+                timeout_seconds=_to_timeout(
+                    resolved.get("request_timeout_seconds"),
+                    default=25.0,
+                ),
                 fallback=fallback,
             )
     elif mode in {"huggingface", "hf", "transformers"}:
@@ -746,6 +1015,8 @@ def build_policy_from_config(config: Optional[Dict[str, Any]] = None) -> BasePol
                     default=chat_timeout_seconds,
                 ),
                 stage_log_enabled=_to_bool(resolved.get("hf_stage_logs"), default=True),
+                use_worker_process=_to_bool(resolved.get("hf_use_worker_process"), default=True),
+                worker_module=str(resolved.get("hf_worker_module", "mcp_rlm.hf_worker")).strip() or "mcp_rlm.hf_worker",
                 fallback=fallback,
             )
     else:
