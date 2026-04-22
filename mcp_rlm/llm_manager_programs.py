@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import asyncio
 import json
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 from time import perf_counter
 
 from .mcp import MCPCall
-from .policy import build_policy_from_config
+from .policy import ModelJSONParseError, build_policy_from_config, extract_json_object_from_text
 from .types import Budget, GroupResult, MemoryObjectType, WriteReason
 
 if TYPE_CHECKING:
@@ -19,38 +20,24 @@ if TYPE_CHECKING:
 
 
 _DEFAULT_MANAGER_SYSTEM_PROMPT = (
-    "You are the root execution manager for MCP-RLM. "
-    "You MUST decide the next runtime action as JSON only. "
-    "You control tool/object calls, parallel calls, recursive spawn/join, "
-    "shared-memory read/write, and finalization.\n\n"
-    "Return exactly one JSON object with this schema:\n"
-    "{\n"
-    '  "type": "call_object | call_many | spawn_groups | join_groups | read_memory | write_memory | flush_context_pressure | finalize",\n'
-    '  "rationale": "short reason",\n'
-    '  "object_name": "alias/tool",\n'
-    '  "payload": {...},\n'
-    '  "timeout_seconds": 30,\n'
-    '  "calls": [{"object_name": "alias/tool", "payload": {...}, "timeout_seconds": 30}],\n'
-    '  "best_effort": false,\n'
-    '  "specs": [{"goal": "...", "program": "llm_managed_child", "input_payload": {...}, "budget": {"max_steps": 64, "max_children": 16, "max_wall_seconds": 300, "max_object_calls": 256}}],\n'
-    '  "group_ids": ["grp_xxx"],\n'
-    '  "join_mode": "explicit | all_pending",\n'
-    '  "key": "memory/key",\n'
-    '  "object_type": "GOAL | FACT | PLAN | DECISION | ARTIFACT | METRIC",\n'
-    '  "reason": "SPAWN_PREP | JOIN_RESULT | CONTEXT_PRESSURE | VALUE_EVENT | FINALIZE",\n'
-    '  "content": {...},\n'
-    '  "confidence": 0.0,\n'
-    '  "force": false,\n'
-    '  "note": "optional",\n'
-    '  "output": {...}\n'
-    "}\n\n"
+    "You are the root execution manager for MCP-RLM.\n"
+    "Return exactly ONE JSON object, no markdown, no prose.\n\n"
+    "Allowed actions and minimal required keys:\n"
+    '1) {"type":"call_object","object_name":"alias/tool","payload":{...}}\n'
+    '2) {"type":"call_many","calls":[{"object_name":"alias/tool","payload":{...}}]}\n'
+    '3) {"type":"spawn_groups","specs":[{"goal":"...","program":"llm_managed_child","input_payload":{...}}]}\n'
+    '4) {"type":"join_groups","join_mode":"all_pending"} or {"type":"join_groups","group_ids":[...]}\n'
+    '5) {"type":"read_memory","key":"..."}\n'
+    '6) {"type":"write_memory","key":"...","object_type":"ARTIFACT","reason":"VALUE_EVENT","content":{...}}\n'
+    '7) {"type":"flush_context_pressure","note":"optional"}\n'
+    '8) {"type":"finalize","pred":"A|B|C|D","response":"The correct answer is (X).","confidence":0.0}\n'
+    '   or {"type":"finalize","output":{...}}\n\n'
     "Rules:\n"
-    "1) Use call_many when parallelism helps.\n"
-    "2) Use spawn_groups for recursive decomposition.\n"
-    "3) Use join_groups before final answer if children are pending.\n"
-    "4) Persist critical state with write_memory.\n"
-    "5) When done, return type=finalize with final output.\n"
-    "6) Never return markdown, code fences, or extra text."
+    "1) Prefer compact JSON, only include keys needed by the action.\n"
+    "2) Use call_many for independent MCP calls.\n"
+    "3) Use spawn_groups for decomposition and join_groups before finishing.\n"
+    "4) If unsure, do call_object instead of guessing final answer.\n"
+    "5) Final response format must be: The correct answer is (X)."
 )
 
 _DEFAULT_FINALIZE_SYSTEM_PROMPT = (
@@ -62,9 +49,12 @@ _MANAGER_ACTION_JSON_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "type": {"type": "string"},
+        "action_type": {"type": "string"},
         "rationale": {"type": "string"},
         "object_name": {"type": "string"},
+        "object": {"type": "string"},
         "payload": {"type": "object"},
+        "args": {"type": "object"},
         "timeout_seconds": {"type": "number"},
         "calls": {"type": "array"},
         "best_effort": {"type": "boolean"},
@@ -79,9 +69,12 @@ _MANAGER_ACTION_JSON_SCHEMA: Dict[str, Any] = {
         "force": {"type": "boolean"},
         "note": {"type": "string"},
         "output": {},
+        "pred": {"type": "string"},
+        "response": {"type": "string"},
+        "answer": {"type": "string"},
     },
     "required": ["type"],
-    "additionalProperties": True,
+    "additionalProperties": False,
 }
 
 _MANAGER_FINALIZE_JSON_SCHEMA: Dict[str, Any] = {
@@ -233,21 +226,44 @@ def _normalize_mcq_finalize_output(output: Any, *, input_payload: Dict[str, Any]
 
 
 def _extract_json_object(text: str, *, allow_repair: bool = False) -> Dict[str, Any]:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("No JSON object found")
-    candidate = text[start : end + 1]
+    return extract_json_object_from_text(text, allow_repair=allow_repair)
+
+
+def _resolve_events_log_path(ctx: "GroupContext") -> Optional[str]:
+    direct = str(ctx.input_payload.get("manager_events_log_path", "")).strip()
+    if direct:
+        return direct
+    runtime_dir = str(ctx.input_payload.get("runtime_dir", "")).strip()
+    if runtime_dir:
+        return str(Path(runtime_dir) / "trace" / "events.jsonl")
+    return None
+
+
+def _append_manager_event(
+    *,
+    path: Optional[str],
+    episode_id: str,
+    group_id: str,
+    event_type: str,
+    payload: Dict[str, Any],
+) -> None:
+    if not path:
+        return
     try:
-        payload = json.loads(candidate)
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "episode_id": episode_id,
+            "group_id": group_id,
+            "event_type": event_type,
+            "payload": _jsonable(payload, max_chars=8000),
+        }
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
     except Exception:
-        if not allow_repair:
-            raise
-        repaired = re.sub(r",\s*([}\]])", r"\1", candidate)
-        payload = json.loads(repaired)
-    if not isinstance(payload, dict):
-        raise ValueError("JSON root must be object")
-    return payload
+        # Never let debug event logging break manager execution.
+        return
 
 
 async def _policy_chat_json(
@@ -261,10 +277,11 @@ async def _policy_chat_json(
     group_id: str,
     stage_label: str,
     max_new_tokens: Optional[int] = None,
-    json_mode: str = "json_object",
+    json_mode: str = "json_schema",
     json_schema: Optional[Dict[str, Any]] = None,
     json_repair: bool = True,
     retry_count: int = 1,
+    events_log_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     chat_json = getattr(policy, "_chat_json", None)
     if callable(chat_json):
@@ -291,6 +308,21 @@ async def _policy_chat_json(
                     "json_repair": bool(json_repair),
                 },
             )
+            _append_manager_event(
+                path=events_log_path,
+                episode_id=episode_id,
+                group_id=group_id,
+                event_type="policy_chat_start",
+                payload={
+                    "stage": stage_label,
+                    "attempt": attempt + 1,
+                    "max_attempts": retries + 1,
+                    "timeout_seconds": timeout,
+                    "json_mode": str(json_mode or "none"),
+                    "max_new_tokens": max_new_tokens,
+                    "user_chars": len(user),
+                },
+            )
             try:
                 kwargs = {
                     "system": system,
@@ -299,13 +331,33 @@ async def _policy_chat_json(
                     "json_mode": json_mode,
                     "json_schema": json_schema,
                     "json_repair": json_repair,
+                    "return_meta": True,
                 }
                 try:
                     raw = await asyncio.wait_for(chat_json(**kwargs), timeout=timeout)
                 except TypeError:
                     # Backward compatibility with policy implementations that only accept system/user.
                     raw = await asyncio.wait_for(chat_json(system=system, user=user), timeout=timeout)
-                parsed = raw if isinstance(raw, dict) else _extract_json_object(str(raw), allow_repair=json_repair)
+
+                raw_text = ""
+                parsed_raw: Any = raw
+                if isinstance(raw, dict) and "_mcp_rlm_parsed" in raw:
+                    parsed_raw = raw.get("_mcp_rlm_parsed")
+                    raw_text = str(raw.get("_mcp_rlm_raw_text", ""))
+
+                parsed = (
+                    parsed_raw
+                    if isinstance(parsed_raw, dict)
+                    else _extract_json_object(str(parsed_raw), allow_repair=json_repair)
+                )
+                if not raw_text:
+                    if isinstance(raw, str):
+                        raw_text = raw
+                    elif not isinstance(parsed_raw, dict):
+                        raw_text = str(parsed_raw)
+                    else:
+                        raw_text = json.dumps(parsed_raw, ensure_ascii=False)
+
                 elapsed_ms = int((perf_counter() - start) * 1000)
                 _stage_log(
                     enabled=stage_log_enabled,
@@ -316,6 +368,19 @@ async def _policy_chat_json(
                     group_id=group_id,
                     elapsed_ms=elapsed_ms,
                     detail={"attempt": attempt + 1, "max_attempts": retries + 1},
+                )
+                _append_manager_event(
+                    path=events_log_path,
+                    episode_id=episode_id,
+                    group_id=group_id,
+                    event_type="policy_chat_ok",
+                    payload={
+                        "stage": stage_label,
+                        "attempt": attempt + 1,
+                        "elapsed_ms": elapsed_ms,
+                        "raw_text": raw_text,
+                        "parsed": parsed,
+                    },
                 )
                 return parsed
             except asyncio.TimeoutError as exc:
@@ -330,12 +395,32 @@ async def _policy_chat_json(
                     elapsed_ms=elapsed_ms,
                     detail={"timeout_seconds": timeout, "attempt": attempt + 1, "max_attempts": retries + 1},
                 )
+                _append_manager_event(
+                    path=events_log_path,
+                    episode_id=episode_id,
+                    group_id=group_id,
+                    event_type="policy_chat_timeout",
+                    payload={
+                        "stage": stage_label,
+                        "attempt": attempt + 1,
+                        "elapsed_ms": elapsed_ms,
+                        "timeout_seconds": timeout,
+                    },
+                )
                 raise RuntimeError(
                     f"{stage_label} timed out after {timeout_seconds:.1f}s (policy={type(policy).__name__})"
                 ) from exc
             except Exception as exc:
                 last_error = exc
                 elapsed_ms = int((perf_counter() - start) * 1000)
+                raw_text = ""
+                parse_meta: Dict[str, Any] = {}
+                if isinstance(exc, ModelJSONParseError):
+                    raw_text = str(exc.raw_text or "")
+                    parse_meta = {
+                        "candidate_count": exc.candidate_count,
+                        "last_error": exc.last_error,
+                    }
                 _stage_log(
                     enabled=stage_log_enabled,
                     component="llm_manager",
@@ -349,6 +434,21 @@ async def _policy_chat_json(
                         "error_type": type(exc).__name__,
                         "attempt": attempt + 1,
                         "max_attempts": retries + 1,
+                    },
+                )
+                _append_manager_event(
+                    path=events_log_path,
+                    episode_id=episode_id,
+                    group_id=group_id,
+                    event_type="policy_chat_error",
+                    payload={
+                        "stage": stage_label,
+                        "attempt": attempt + 1,
+                        "elapsed_ms": elapsed_ms,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "raw_text": raw_text,
+                        "parse_meta": parse_meta,
                     },
                 )
                 if attempt >= retries:
@@ -525,6 +625,87 @@ def _build_turn_payload(
     }
 
 
+def _normalize_manager_action(raw_action: Dict[str, Any]) -> Dict[str, Any]:
+    action = dict(raw_action or {})
+    action_type = str(action.get("type") or action.get("action_type") or "").strip().lower()
+    alias_map = {
+        "call": "call_object",
+        "tool_call": "call_object",
+        "invoke": "call_object",
+        "object_call": "call_object",
+        "parallel_call": "call_many",
+        "batch_call": "call_many",
+        "call_objects": "call_many",
+        "spawn": "spawn_groups",
+        "spawn_group": "spawn_groups",
+        "spawn_children": "spawn_groups",
+        "join": "join_groups",
+        "wait": "join_groups",
+        "collect": "join_groups",
+        "finish": "finalize",
+        "done": "finalize",
+        "answer": "finalize",
+        "complete": "finalize",
+        "flush": "flush_context_pressure",
+        "flush_memory": "flush_context_pressure",
+    }
+    normalized = alias_map.get(action_type, action_type)
+    if normalized:
+        action["type"] = normalized
+
+    args = action.get("args")
+    if isinstance(args, dict):
+        for key, value in args.items():
+            if key not in action:
+                action[key] = value
+
+    if "object_name" not in action and action.get("object"):
+        action["object_name"] = action.get("object")
+
+    if action.get("type") == "call_many" and (not isinstance(action.get("calls"), list) or not action.get("calls")):
+        object_name = str(action.get("object_name", "")).strip()
+        payload = action.get("payload", {})
+        if object_name:
+            action["calls"] = [
+                {
+                    "object_name": object_name,
+                    "payload": payload if isinstance(payload, dict) else {"value": payload},
+                    "timeout_seconds": action.get("timeout_seconds", 30.0),
+                }
+            ]
+
+    if action.get("type") == "join_groups" and not action.get("group_ids") and not action.get("join_mode"):
+        action["join_mode"] = "all_pending"
+
+    if action.get("type") == "finalize" and not isinstance(action.get("output"), dict):
+        output: Dict[str, Any] = {}
+        for key in ("pred", "response", "answer", "confidence"):
+            if key in action and action.get(key) not in (None, ""):
+                output[key] = action.get(key)
+        if output:
+            action["output"] = output
+
+    return action
+
+
+def _hydrate_call_payload(ctx: "GroupContext", *, object_name: str, payload: Any) -> Dict[str, Any]:
+    output = dict(payload) if isinstance(payload, dict) else {"value": payload}
+    object_name = str(object_name or "").strip()
+    question = str(ctx.input_payload.get("question") or ctx.input_payload.get("query") or ctx.goal or "").strip()
+    manifest_path = str(ctx.input_payload.get("manifest_path", "")).strip()
+    choices = ctx.input_payload.get("choices")
+
+    if question and "query" not in output and object_name.startswith("ctx/"):
+        output["query"] = question
+    if question and "question" not in output and object_name.startswith("analysis/"):
+        output["question"] = question
+    if manifest_path and "manifest_path" not in output and object_name.startswith("ctx/"):
+        output["manifest_path"] = manifest_path
+    if isinstance(choices, dict) and "choices" not in output and object_name.startswith("analysis/"):
+        output["choices"] = choices
+    return output
+
+
 async def _execute_action(
     ctx: "GroupContext",
     *,
@@ -541,9 +722,7 @@ async def _execute_action(
         object_name = str(action.get("object_name", "")).strip()
         if not object_name:
             raise RuntimeError("call_object requires object_name")
-        payload = action.get("payload", {})
-        if not isinstance(payload, dict):
-            payload = {"value": payload}
+        payload = _hydrate_call_payload(ctx, object_name=object_name, payload=action.get("payload", {}))
         timeout_seconds = float(action.get("timeout_seconds", 30.0))
         output = await ctx.call_object(object_name, payload, timeout_seconds=timeout_seconds)
         obs = {
@@ -566,9 +745,7 @@ async def _execute_action(
             object_name = str(item.get("object_name", "")).strip()
             if not object_name:
                 continue
-            payload = item.get("payload", {})
-            if not isinstance(payload, dict):
-                payload = {"value": payload}
+            payload = _hydrate_call_payload(ctx, object_name=object_name, payload=item.get("payload", {}))
             timeout_seconds = float(item.get("timeout_seconds", action.get("timeout_seconds", 30.0)))
             calls.append(MCPCall(object_name=object_name, payload=payload, timeout_seconds=timeout_seconds))
 
@@ -641,6 +818,8 @@ async def _execute_action(
             "manager_json_mode",
             "manager_json_retry",
             "manager_json_repair",
+            "manager_events_log_path",
+            "runtime_dir",
         ]
 
         specs: List[Dict[str, Any]] = []
@@ -769,7 +948,14 @@ async def _execute_action(
         return obs, False, None
 
     if action_type == "finalize":
-        output = _normalize_mcq_finalize_output(action.get("output", {}), input_payload=ctx.input_payload)
+        raw_output = action.get("output", {})
+        if not isinstance(raw_output, dict):
+            raw_output = {}
+        if not raw_output:
+            for key in ("pred", "response", "answer", "confidence"):
+                if key in action and action.get(key) not in (None, ""):
+                    raw_output[key] = action.get(key)
+        output = _normalize_mcq_finalize_output(raw_output, input_payload=ctx.input_payload)
         finalized = await ctx.finalize(output)
         obs = {
             "type": "finalize",
@@ -861,11 +1047,11 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
     manager_json_mode = str(
         ctx.input_payload.get(
             "manager_json_mode",
-            os.getenv("MCP_RLM_MANAGER_JSON_MODE", "json_object"),
+            os.getenv("MCP_RLM_MANAGER_JSON_MODE", "json_schema"),
         )
     ).strip().lower()
     if manager_json_mode not in {"none", "json_object", "json_schema"}:
-        manager_json_mode = "json_object"
+        manager_json_mode = "json_schema"
     manager_json_retry = _to_int(
         ctx.input_payload.get(
             "manager_json_retry",
@@ -898,6 +1084,22 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
             "json_repair": manager_json_repair,
         },
     )
+    events_log_path = _resolve_events_log_path(ctx)
+    _append_manager_event(
+        path=events_log_path,
+        episode_id=ctx.episode_id,
+        group_id=ctx.group_id,
+        event_type="manager_runtime_config",
+        payload={
+            "policy_config": _jsonable(manager_policy_config, max_chars=1600),
+            "max_turns": max_turns,
+            "max_history": max_history,
+            "json_mode": manager_json_mode,
+            "json_retry": manager_json_retry,
+            "json_repair": manager_json_repair,
+            "events_log_path": events_log_path,
+        },
+    )
 
     script = ctx.input_payload.get("manager_script", [])
     if not isinstance(script, list):
@@ -908,6 +1110,13 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
         ctx,
         timeout_seconds=list_objects_timeout_seconds,
         stage_log_enabled=stage_log_enabled,
+    )
+    _append_manager_event(
+        path=events_log_path,
+        episode_id=ctx.episode_id,
+        group_id=ctx.group_id,
+        event_type="manager_list_objects",
+        payload={"num_objects": len(available_objects), "objects": available_objects},
     )
     pending_children: List[str] = []
     known_memory_keys: List[str] = []
@@ -933,24 +1142,53 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
             action = dict(script[script_index])
             script_index += 1
         else:
-            action_raw = await _policy_chat_json(
-                policy,
-                system=manager_system_prompt,
-                user=json.dumps(turn_payload, ensure_ascii=False),
-                timeout_seconds=policy_chat_timeout_seconds,
-                stage_log_enabled=stage_log_enabled,
-                episode_id=ctx.episode_id,
-                group_id=ctx.group_id,
-                stage_label=f"manager_turn_{turn}_policy_chat",
-                max_new_tokens=action_max_new_tokens,
-                json_mode=manager_json_mode,
-                json_schema=_MANAGER_ACTION_JSON_SCHEMA if manager_json_mode == "json_schema" else None,
-                json_repair=manager_json_repair,
-                retry_count=manager_json_retry,
-            )
-            action = action_raw.get("action", action_raw) if isinstance(action_raw, dict) else {}
-            if not isinstance(action, dict):
-                raise RuntimeError("Manager policy returned non-dict action")
+            try:
+                action_raw = await _policy_chat_json(
+                    policy,
+                    system=manager_system_prompt,
+                    user=json.dumps(turn_payload, ensure_ascii=False),
+                    timeout_seconds=policy_chat_timeout_seconds,
+                    stage_log_enabled=stage_log_enabled,
+                    episode_id=ctx.episode_id,
+                    group_id=ctx.group_id,
+                    stage_label=f"manager_turn_{turn}_policy_chat",
+                    max_new_tokens=action_max_new_tokens,
+                    json_mode=manager_json_mode,
+                    json_schema=_MANAGER_ACTION_JSON_SCHEMA if manager_json_mode == "json_schema" else None,
+                    json_repair=manager_json_repair,
+                    retry_count=manager_json_retry,
+                    events_log_path=events_log_path,
+                )
+                action = action_raw.get("action", action_raw) if isinstance(action_raw, dict) else {}
+                if not isinstance(action, dict):
+                    raise RuntimeError("Manager policy returned non-dict action")
+            except Exception as exc:
+                observation = {
+                    "type": "policy_chat_error",
+                    "error": str(exc),
+                    "turn": turn,
+                }
+                history.append(
+                    {
+                        "turn": turn,
+                        "action": {"type": "policy_chat_error"},
+                        "action_full": {},
+                        "observation": _jsonable(observation, max_chars=2000),
+                    }
+                )
+                if len(history) > max_history:
+                    history = history[-max_history:]
+                last_observation = observation
+                _append_manager_event(
+                    path=events_log_path,
+                    episode_id=ctx.episode_id,
+                    group_id=ctx.group_id,
+                    event_type="manager_turn_policy_chat_error",
+                    payload={"turn": turn, "error": str(exc)},
+                )
+                continue
+
+        action = _normalize_manager_action(action)
 
         action_summary = {
             "type": str(action.get("type") or action.get("action_type") or ""),
@@ -975,6 +1213,19 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
             }
             done = False
             final_output = None
+
+        _append_manager_event(
+            path=events_log_path,
+            episode_id=ctx.episode_id,
+            group_id=ctx.group_id,
+            event_type="manager_turn_action_result",
+            payload={
+                "turn": turn,
+                "action": _jsonable(action, max_chars=2400),
+                "observation": _jsonable(observation, max_chars=2400),
+                "done": bool(done),
+            },
+        )
 
         history.append(
             {
@@ -1037,11 +1288,19 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
             json_schema=_MANAGER_FINALIZE_JSON_SCHEMA if manager_json_mode == "json_schema" else None,
             json_repair=manager_json_repair,
             retry_count=manager_json_retry,
+            events_log_path=events_log_path,
         )
         final_output = final_raw.get("output", final_raw) if isinstance(final_raw, dict) else {"output": final_raw}
         if not isinstance(final_output, dict):
             final_output = {"output": final_output}
     except Exception as exc:
+        _append_manager_event(
+            path=events_log_path,
+            episode_id=ctx.episode_id,
+            group_id=ctx.group_id,
+            event_type="manager_finalize_error",
+            payload={"error": str(exc), "error_type": type(exc).__name__},
+        )
         final_output = {
             "error": "Manager reached max turns and finalize policy failed",
             "finalize_error": str(exc),
@@ -1050,6 +1309,13 @@ async def llm_managed_group_program(ctx: "GroupContext") -> Dict[str, Any]:
         }
 
     final_output = _normalize_mcq_finalize_output(final_output, input_payload=ctx.input_payload)
+    _append_manager_event(
+        path=events_log_path,
+        episode_id=ctx.episode_id,
+        group_id=ctx.group_id,
+        event_type="manager_finalize_output",
+        payload={"output": _jsonable(final_output, max_chars=2400)},
+    )
     final_output.setdefault("manager_max_turns_reached", True)
     final_output.setdefault("manager_turns", max_turns)
     final_output.setdefault("manager_history", history)

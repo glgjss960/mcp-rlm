@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import json
 import os
@@ -57,37 +57,136 @@ def _stage_log(
     print("[mcp-rlm-stage] " + json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
-def _extract_json_candidate(text: str) -> str:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end < 0 or end <= start:
-        raise ValueError("No JSON object found in model output")
-    return text[start : end + 1]
+class ModelJSONParseError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_text: str = "",
+        candidate_count: int = 0,
+        last_error: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_text = raw_text
+        self.candidate_count = int(candidate_count)
+        self.last_error = str(last_error or "")
+
+
+def _strip_markdown_fence(text: str) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return cleaned
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+
+
+def _collect_json_object_candidates(text: str) -> List[str]:
+    payload = _strip_markdown_fence(text)
+    out: List[str] = []
+    start = -1
+    depth = 0
+    in_string = False
+    escape = False
+    for idx, ch in enumerate(payload):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == "\"":
+                in_string = False
+            continue
+
+        if ch == "\"":
+            in_string = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+            continue
+        if ch == "}":
+            if depth <= 0:
+                continue
+            depth -= 1
+            if depth == 0 and start >= 0:
+                out.append(payload[start : idx + 1])
+                start = -1
+    if out:
+        return out
+
+    # Legacy fallback: from first '{' to last '}'.
+    first = payload.find("{")
+    last = payload.rfind("}")
+    if first >= 0 and last > first:
+        return [payload[first : last + 1]]
+    return []
+
+
+def _repair_multiline_missing_commas(raw: str) -> str:
+    lines = str(raw or "").splitlines()
+    if len(lines) <= 2:
+        return str(raw or "")
+    fixed = list(lines)
+    for idx in range(1, len(fixed)):
+        prev = fixed[idx - 1].rstrip()
+        curr = fixed[idx].lstrip()
+        if not prev or not curr.startswith("\""):
+            continue
+        if prev.endswith((",", "{", "[", ":")):
+            continue
+        fixed[idx - 1] = prev + ","
+    return "\n".join(fixed)
 
 
 def _repair_json_text(raw: str) -> str:
-    text = str(raw or "").strip()
+    text = _strip_markdown_fence(raw)
     if not text:
         return text
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text)
-    text = _extract_json_candidate(text)
-    # Remove trailing commas before } or ]
+    # Remove trailing commas before } or ].
     text = re.sub(r",\s*([}\]])", r"\1", text)
+    # Repair common missing-comma failure in multiline key/value JSON.
+    text = _repair_multiline_missing_commas(text)
     return text
 
 
+def extract_json_object_from_text(text: str, *, allow_repair: bool = False) -> Dict[str, Any]:
+    raw_text = _strip_markdown_fence(text)
+    candidates = _collect_json_object_candidates(raw_text)
+    if not candidates:
+        raise ModelJSONParseError("No JSON object found in model output", raw_text=raw_text)
+
+    parse_errors: List[str] = []
+    for candidate in candidates:
+        attempts = [candidate]
+        if allow_repair:
+            repaired = _repair_json_text(candidate)
+            if repaired and repaired != candidate:
+                attempts.append(repaired)
+        for current in attempts:
+            try:
+                parsed = json.loads(current)
+            except Exception as exc:
+                parse_errors.append(str(exc))
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+            parse_errors.append("JSON root must be object")
+
+    last_error = parse_errors[-1] if parse_errors else ""
+    raise ModelJSONParseError(
+        "Failed to parse JSON object from model output",
+        raw_text=raw_text,
+        candidate_count=len(candidates),
+        last_error=last_error,
+    )
+
+
 def _extract_json_object(text: str, *, allow_repair: bool = False) -> Dict[str, Any]:
-    candidate = _extract_json_candidate(text)
-    try:
-        parsed = json.loads(candidate)
-    except Exception:
-        if not allow_repair:
-            raise
-        parsed = json.loads(_repair_json_text(candidate))
-    if not isinstance(parsed, dict):
-        raise ValueError("JSON root must be object")
-    return parsed
+    return extract_json_object_from_text(text, allow_repair=allow_repair)
 
 
 @dataclass
@@ -147,6 +246,7 @@ class OpenAICompatiblePolicy(BasePolicy):
     def __init__(
         self,
         *,
+        provider_mode: str,
         api_base: str,
         model: str,
         api_key: Optional[str] = None,
@@ -156,6 +256,7 @@ class OpenAICompatiblePolicy(BasePolicy):
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.model = model
+        self.provider_mode = str(provider_mode or "").strip().lower()
         self.api_key = api_key
         self.extra_headers = dict(extra_headers or {})
         self.timeout_seconds = timeout_seconds
@@ -233,6 +334,7 @@ class OpenAICompatiblePolicy(BasePolicy):
         json_mode: str = "none",
         json_schema: Optional[Dict[str, Any]] = None,
         json_repair: bool = False,
+        return_meta: bool = False,
     ) -> Dict[str, Any]:
         payload = {
             "model": self.model,
@@ -248,16 +350,21 @@ class OpenAICompatiblePolicy(BasePolicy):
         normalized_mode = str(json_mode or "none").strip().lower()
         if normalized_mode == "json_object":
             payload["response_format"] = {"type": "json_object"}
+            if self.provider_mode == "vllm":
+                payload["guided_json"] = {"type": "object"}
         elif normalized_mode == "json_schema":
+            schema = json_schema if isinstance(json_schema, dict) else {"type": "object"}
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "mcp_rlm_response",
-                    "schema": json_schema if isinstance(json_schema, dict) else {"type": "object"},
+                    "schema": schema,
                 },
             }
+            if self.provider_mode == "vllm":
+                payload["guided_json"] = schema
 
-        def _request(payload_obj: Dict[str, Any]) -> Dict[str, Any]:
+        def _request(payload_obj: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
             data = json.dumps(payload_obj).encode("utf-8")
             headers = {"Content-Type": "application/json"}
             if self.api_key:
@@ -284,15 +391,23 @@ class OpenAICompatiblePolicy(BasePolicy):
                     elif item is not None:
                         parts.append(str(item))
                 content = "".join(parts)
-            return _extract_json_object(content, allow_repair=json_repair)
+            parsed = _extract_json_object(str(content), allow_repair=json_repair)
+            return parsed, str(content)
         try:
-            return await asyncio.to_thread(_request, payload)
-        except Exception:
+            parsed, raw_text = await asyncio.to_thread(_request, payload)
+            if return_meta:
+                return {"_mcp_rlm_parsed": parsed, "_mcp_rlm_raw_text": raw_text}
+            return parsed
+        except Exception as exc:
             # Some OpenAI-compatible providers reject response_format=json_schema/json_object.
-            if "response_format" in payload:
+            if "response_format" in payload and not isinstance(exc, ModelJSONParseError):
                 fallback_payload = dict(payload)
                 fallback_payload.pop("response_format", None)
-                return await asyncio.to_thread(_request, fallback_payload)
+                fallback_payload.pop("guided_json", None)
+                parsed, raw_text = await asyncio.to_thread(_request, fallback_payload)
+                if return_meta:
+                    return {"_mcp_rlm_parsed": parsed, "_mcp_rlm_raw_text": raw_text}
+                return parsed
             raise
 
 
@@ -414,6 +529,7 @@ class TransformersLocalPolicy(BasePolicy):
         json_mode: str = "none",
         json_schema: Optional[Dict[str, Any]] = None,
         json_repair: bool = False,
+        return_meta: bool = False,
     ) -> Dict[str, Any]:
         start = perf_counter()
         _stage_log(
@@ -647,6 +763,8 @@ class TransformersLocalPolicy(BasePolicy):
             elapsed_ms=elapsed_ms,
             detail={"model": self.model},
         )
+        if return_meta:
+            return {"_mcp_rlm_parsed": result, "_mcp_rlm_raw_text": str(text)}
         return result
 
     def _chat_prompt_from_messages(self, messages: List[Dict[str, str]]) -> str:
@@ -975,6 +1093,7 @@ def build_policy_from_config(config: Optional[Dict[str, Any]] = None) -> BasePol
                     headers["X-Title"] = app
             api_key = str(resolved.get("api_key", "")).strip() or None
             policy = OpenAICompatiblePolicy(
+                provider_mode=mode,
                 api_base=api_base,
                 model=model,
                 api_key=api_key,

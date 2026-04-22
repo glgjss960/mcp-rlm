@@ -235,7 +235,9 @@ async def run_one(
     item_dir = out_dir / "runs" / item_id
     store_dir = item_dir / "context_store"
     memory_dir = item_dir / "memory"
+    trace_dir = item_dir / "trace"
     item_dir.mkdir(parents=True, exist_ok=True)
+    trace_dir.mkdir(parents=True, exist_ok=True)
 
     context_file = item_dir / "context.txt"
     context_file.write_text(context, encoding="utf-8")
@@ -284,6 +286,8 @@ async def run_one(
             "longbench_prompt_dir": longbench_prompt_dir,
             "root_extra_object_fanout": root_extra_object_fanout,
             "leaf_extra_object_fanout": leaf_extra_object_fanout,
+            "runtime_dir": str(item_dir),
+            "manager_events_log_path": str(trace_dir / "events.jsonl"),
         }
         if manager_policy_mode.strip():
             payload["manager_policy_mode"] = manager_policy_mode.strip()
@@ -324,6 +328,7 @@ async def run_one(
         export_trace(trace, item_dir / "trace")
 
     output = trace.root_output if isinstance(trace.root_output, dict) else {}
+    root_group = next((g for g in trace.groups if g.group_id == trace.root_group_id), None)
     pred = str(output.get("pred", "")).strip().upper()
     if pred not in _MCQL:
         pred = extract_letter(str(output.get("response", ""))) or ""
@@ -359,6 +364,8 @@ async def run_one(
             "track": normalized_track,
             "program": program,
             "root_output": output,
+            "root_group_status": (root_group.status.value if root_group is not None else None),
+            "root_group_error": (root_group.error if root_group is not None else None),
             "manifest_path": str(manifest_path),
             "runtime_dir": str(item_dir),
         },
@@ -435,7 +442,7 @@ async def main() -> None:
     parser.add_argument("--manager-policy-api-key", type=str, default="", help="Optional manager-only API key override")
     parser.add_argument("--manager-action-max-new-tokens", type=int, default=96, help="Max new tokens for each manager action turn")
     parser.add_argument("--manager-finalize-max-new-tokens", type=int, default=160, help="Max new tokens for manager finalize call")
-    parser.add_argument("--manager-json-mode", type=str, default="json_object", choices=["none", "json_object", "json_schema"], help="JSON constraint mode for manager calls")
+    parser.add_argument("--manager-json-mode", type=str, default="json_schema", choices=["none", "json_object", "json_schema"], help="JSON constraint mode for manager calls")
     parser.add_argument("--manager-json-retry", type=int, default=1, help="Retries for manager JSON parse/generation errors")
     parser.add_argument("--manager-json-repair", action=argparse.BooleanOptionalAction, default=True, help="Enable JSON repair fallback for manager outputs")
     parser.add_argument("--default-child-program", type=str, default="llm_managed_child")

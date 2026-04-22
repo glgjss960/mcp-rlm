@@ -237,7 +237,9 @@ async def run_one(
     item_dir = out_dir / "runs" / item_id
     store_dir = item_dir / "context_store"
     memory_dir = item_dir / "memory"
+    trace_dir = item_dir / "trace"
     item_dir.mkdir(parents=True, exist_ok=True)
+    trace_dir.mkdir(parents=True, exist_ok=True)
 
     context_file = item_dir / "context.txt"
     context_file.write_text(context, encoding="utf-8")
@@ -276,6 +278,8 @@ async def run_one(
             "default_child_program": default_child_program,
             "manager_system_prompt": manager_system_prompt,
             "manager_finalize_system_prompt": manager_finalize_system_prompt,
+            "runtime_dir": str(item_dir),
+            "manager_events_log_path": str(trace_dir / "events.jsonl"),
         }
         if manager_policy_mode.strip():
             payload["manager_policy_mode"] = manager_policy_mode.strip()
@@ -295,6 +299,7 @@ async def run_one(
         await mcp_client.close()
 
     output = trace.root_output if isinstance(trace.root_output, dict) else {"output": trace.root_output}
+    root_group = next((g for g in trace.groups if g.group_id == trace.root_group_id), None)
     pred = str(output.get("pred", "")).strip().upper()
     if pred not in _MCQL:
         pred = extract_letter(str(output.get("response", ""))) or ""
@@ -320,6 +325,8 @@ async def run_one(
             "success": bool(trace.success),
             "program": program,
             "root_output": output,
+            "root_group_status": (root_group.status.value if root_group is not None else None),
+            "root_group_error": (root_group.error if root_group is not None else None),
             "manifest_path": str(manifest_path),
             "runtime_dir": str(item_dir),
         },
@@ -377,7 +384,7 @@ async def main() -> None:
     parser.add_argument("--manager-policy-api-key", type=str, default="", help="Optional manager-only API key override")
     parser.add_argument("--manager-action-max-new-tokens", type=int, default=96)
     parser.add_argument("--manager-finalize-max-new-tokens", type=int, default=160)
-    parser.add_argument("--manager-json-mode", type=str, default="json_object", choices=["none", "json_object", "json_schema"])
+    parser.add_argument("--manager-json-mode", type=str, default="json_schema", choices=["none", "json_object", "json_schema"])
     parser.add_argument("--manager-json-retry", type=int, default=1)
     parser.add_argument("--manager-json-repair", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--default-child-program", type=str, default="llm_managed_child")
